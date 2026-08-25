@@ -1,0 +1,18 @@
+[package]
+name = "a2a-card"
+description = "Strict A2A Agent Card parsing, field-presence validation and RFC 8785 canonicalization."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+sha2 = { workspace = true }
+base64ct = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json_canonicalizer = "0.3"

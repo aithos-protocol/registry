@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/a2a-card"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.90"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_jcs = "0.2"
+sha2 = "0.10"
+base64ct = { version = "1", features = ["alloc"] }
+thiserror = "2"
