@@ -25,6 +25,7 @@ crates/a2a-card/         strict parsing, field presence, RFC 8785
                          canonicalization, digests
 crates/registry-core/    RFC 7638 thumbprints, JWS verification, and the
                          write-authorization rules
+crates/registry-api/     HTTP surface, storage contract, in-memory store
 vectors/                 published conformance vectors
   rfc8785/               the official RFC 8785 test vectors
   a2a-sample-agent-card.json   the sample card from A2A §8.5
@@ -81,7 +82,7 @@ moves.
 ## Development
 
 ```sh
-cargo test           # 50 tests
+cargo test           # 66 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p a2a-card --target wasm32-unknown-unknown
@@ -92,7 +93,26 @@ RFC 8785 canonicalization vectors, the worked example of A2A §8.4.1 byte for
 byte, the specification's own sample card, and the RFC 7638 thumbprint example.
 Signatures in the tests are real, produced by generated keys.
 
+## Planned deployment
+
+The read path and the write path are deliberately asymmetric, because their
+traffic is.
+
+Published card bytes are immutable and addressed by their own digest, which
+makes them static objects. The public read surface is therefore served from
+**S3 behind CloudFront** and never reaches compute at all. Writes are rare, and
+go to a **Rust Lambda** behind an **HTTP API**, with **DynamoDB** holding agent
+state.
+
+The two invariants of §6 — a strictly increasing card version, and a signature
+from a currently authorized key — are evaluated against a snapshot of the
+agent's state, so committing them has to be conditional on that snapshot still
+being current. DynamoDB's conditional writes express exactly that, which is why
+the `Store` contract in `registry-api` is written around a `Conflict` error
+rather than around locks.
+
 ## Status
 
-The protocol core is implemented and tested. Still to come: the HTTP surface,
-storage, the Terraform stack, and the browser signing client.
+The protocol core and the HTTP surface are implemented and tested against an
+in-memory store. Still to come: the DynamoDB and S3 backend, the Lambda
+adapter, the Terraform stack, and the browser signing client.

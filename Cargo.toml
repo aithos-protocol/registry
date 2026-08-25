@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/a2a-card", "crates/registry-core"]
+members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,3 +15,7 @@ serde_jcs = "0.2"
 sha2 = "0.10"
 base64ct = { version = "1", features = ["alloc"] }
 thiserror = "2"
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+async-trait = "0.1"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
