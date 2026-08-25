@@ -17,7 +17,8 @@ identifiers listed at the end. Create no application resources.
 ### What is being built, for context
 
 A public registry that stores signed [A2A](https://a2a-protocol.org) Agent
-Cards. The runtime shape is deliberately minimal:
+Cards, to be served from `registry.aithos.world`. The runtime shape is
+deliberately minimal:
 
 - **Lambda** (Rust, `provided.al2023`) behind an **API Gateway HTTP API**, for
   the rare write path
@@ -114,14 +115,46 @@ for removal. The bucket policy must therefore allow `s3:DeleteObject` on
 
 ### 6. DNS
 
-The service will eventually serve `registry.aithos.be`. Find out and report:
+The service will be served from **`aithos.world`**, which already uses Route 53
+nameservers (`ns-988.awsdns-59.net`, `ns-1033.awsdns-01.org`,
+`ns-1670.awsdns-16.co.uk`, `ns-204.awsdns-25.com`) even though the domain is
+registered at IONOS. A hosted zone therefore already exists in **some** AWS
+account — very likely not one of the two being created here.
 
-- where DNS for `aithos.be` is currently hosted;
-- whether a Route 53 hosted zone already exists for it, and in which account;
-- whether delegating `registry.aithos.be` to a hosted zone in the prod account
-  is acceptable.
+Hostnames:
 
-Do not create the hosted zone or any record yet.
+| Environment | Hostname |
+| --- | --- |
+| prod | `registry.aithos.world` |
+| dev | `registry-dev.aithos.world` |
+
+Find out and report **which AWS account holds the `aithos.world` hosted zone**,
+and its zone ID. That account is where the delegation records will have to be
+created, and it is almost certainly not where the service will run — so the
+Terraform will need a second provider with a cross-account role, or those two
+records will have to be created by hand once.
+
+Do not create any hosted zone or record yet. Just report:
+
+- the account ID and zone ID of the existing `aithos.world` hosted zone;
+- whether `registry.aithos.world` and `registry-dev.aithos.world` are free of
+  existing records;
+- whether a cross-account role for Route 53 in that account is acceptable, or
+  whether the two `NS` delegation records should be created manually instead.
+
+The plan is to delegate each subdomain to its own hosted zone in the account
+that runs it, so that each environment owns its DNS and nothing is shared:
+
+```text
+aithos.world zone (existing account)
+  ├── registry.aithos.world       NS → hosted zone in aithos-registry-prod
+  └── registry-dev.aithos.world   NS → hosted zone in aithos-registry-dev
+```
+
+Delegating rather than writing records directly into the parent zone matters
+here: the registry's hostname is the thing clients pin, so its DNS should be
+owned, versioned and deployed by the same Terraform that deploys the service,
+not edited by hand in a zone that belongs to something else.
 
 ---
 
@@ -148,6 +181,7 @@ Plain values, no secrets:
    `aws sts get-caller-identity --profile <name>` succeeds for each.
 5. The state bucket name in each account, with versioning and encryption
    confirmed.
-6. The DNS answers from section 6.
+6. The DNS answers from section 6: the account and zone ID holding
+   `aithos.world`, and how the delegation should be created.
 7. Whether the budget alarms and CloudTrail are in place.
 8. Anything that had to be done differently from the above, and why.
