@@ -21,21 +21,48 @@ key thumbprint, not the `name` field, as the identity of an entry.
 
 ```text
 SPEC.md                  normative protocol rules
-crates/a2a-card/         the deterministic core: strict parsing, field
-                         presence, RFC 8785 canonicalization, digests
+crates/a2a-card/         strict parsing, field presence, RFC 8785
+                         canonicalization, digests
+crates/registry-core/    RFC 7638 thumbprints, JWS verification, and the
+                         write-authorization rules
 vectors/                 published conformance vectors
   rfc8785/               the official RFC 8785 test vectors
   a2a-sample-agent-card.json   the sample card from A2A §8.5
 infra/                   Terraform (AWS: Lambda + DynamoDB + S3 + CloudFront)
 ```
 
-`a2a-card` is pure: no I/O, no key material, no storage opinion. It is meant to
-compile to WebAssembly and run unchanged in the browser that authors and signs
-a card, so that the bytes the publisher signs and the bytes the registry
-verifies cannot diverge.
+Both crates are pure: no I/O, no storage opinion, no key material. `a2a-card`
+compiles to `wasm32-unknown-unknown` as it stands, so the browser that authors
+and signs a card and the server that verifies it can run the same
+canonicalization code, and their bytes cannot diverge.
 
-Key custody stays with the browser: keys are generated through WebCrypto with
-`extractable: false` and never enter WebAssembly linear memory.
+`registry-core` is server-side. It does not currently build for
+`wasm32-unknown-unknown`, because the crypto crates pull `getrandom`, which
+needs its `js` feature on that target. Browser-side *verification* would need
+that; browser-side *signing* does not, and should not: key custody stays with
+WebCrypto, where a key generated with `extractable: false` never enters
+WebAssembly linear memory.
+
+## How authorization works
+
+There are no accounts, and no signed envelope wrapping the request. One rule
+carries the whole design: a signature's `kid` is the RFC 7638 thumbprint of the
+key that verifies it. `kid` sits inside the signed protected header, and the
+thumbprint is a digest of the key material, so a public key submitted in a
+plain request body cannot be swapped for another.
+
+From there:
+
+- an agent's identifier is the thumbprint of its genesis key, which a client
+  can compute offline, before it ever contacts the registry;
+- a write is authorized when at least one signature comes from a key in the
+  previous version's authorized set;
+- the new authorized set is the set of keys that signed the new version.
+
+Key rotation and backup keys fall out of that last line with no extra
+machinery: co-sign one version with the old key and the new one to widen the
+set, then sign with the survivors alone to narrow it. A2A already allows
+multiple signatures for exactly this purpose.
 
 ## Pinned baseline
 
@@ -54,12 +81,18 @@ moves.
 ## Development
 
 ```sh
-cargo test           # 22 tests, including the official RFC 8785 vectors
+cargo test           # 50 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
+cargo build -p a2a-card --target wasm32-unknown-unknown
 ```
+
+The suite verifies against published vectors wherever one exists: the official
+RFC 8785 canonicalization vectors, the worked example of A2A §8.4.1 byte for
+byte, the specification's own sample card, and the RFC 7638 thumbprint example.
+Signatures in the tests are real, produced by generated keys.
 
 ## Status
 
-The deterministic core is implemented and tested. The HTTP surface, storage and
-infrastructure are not yet written.
+The protocol core is implemented and tested. Still to come: the HTTP surface,
+storage, the Terraform stack, and the browser signing client.

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/a2a-card"]
+members = ["crates/a2a-card", "crates/registry-core"]
 
 [workspace.package]
 version = "0.1.0"
