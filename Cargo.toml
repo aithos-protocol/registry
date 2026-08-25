@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api"]
+members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda"]
 
 [workspace.package]
 version = "0.1.0"
@@ -19,3 +19,9 @@ axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 async-trait = "0.1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+aws-config = "1"
+aws-sdk-dynamodb = "1"
+aws-sdk-s3 = "1"
+lambda_http = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

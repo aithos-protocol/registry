@@ -26,6 +26,7 @@ crates/a2a-card/         strict parsing, field presence, RFC 8785
 crates/registry-core/    RFC 7638 thumbprints, JWS verification, and the
                          write-authorization rules
 crates/registry-api/     HTTP surface, storage contract, in-memory store
+crates/registry-lambda/  DynamoDB and S3 backend, Lambda entry point
 vectors/                 published conformance vectors
   rfc8785/               the official RFC 8785 test vectors
   a2a-sample-agent-card.json   the sample card from A2A §8.5
@@ -82,7 +83,7 @@ moves.
 ## Development
 
 ```sh
-cargo test           # 66 tests
+cargo test           # 73 tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p a2a-card --target wasm32-unknown-unknown
@@ -113,6 +114,19 @@ rather than around locks.
 
 ## Status
 
-The protocol core and the HTTP surface are implemented and tested against an
-in-memory store. Still to come: the DynamoDB and S3 backend, the Lambda
-adapter, the Terraform stack, and the browser signing client.
+The protocol core, the HTTP surface and the AWS backend are implemented. The
+first three are covered by tests; the AWS backend's item and key mapping is
+tested by round trip, but its behaviour against a live table is not yet
+exercised — no deployment has happened.
+
+Still to come: the Terraform stack, an integration test against a real table,
+and the browser signing client.
+
+### One known gap
+
+`current/…` in S3 is a cache of the latest version, refreshed after each
+publication so CloudFront can serve reads without touching compute. The API
+itself always answers from DynamoDB and the immutable version objects, so it is
+never wrong — but if that refresh fails, CloudFront keeps serving the previous
+version until the next publication. Today this is logged loudly; the proper fix
+is a DynamoDB Streams handler that reconciles the pointers from the table.
