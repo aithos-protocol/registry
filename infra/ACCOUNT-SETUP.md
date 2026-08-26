@@ -61,13 +61,23 @@ Enable MFA on the root user, and confirm the root user has no access keys.
 
 ### 2. Region
 
-Primary region: **`eu-west-3`** (Paris), unless there is a reason to prefer
-another European region — say which and why if so.
+The organization's service control policy (`p-9hl5sh0c`, in management account
+`592931547821`) permits **only `us-east-1` and `us-west-1`**. Every European
+region is denied, `us-west-2` too: the allowlist is exactly two regions. This
+was discovered by a `CreateBucket` that came back with an explicit deny, not
+from reading the policy, which is not readable from the member accounts.
 
-One AWS constraint to be aware of rather than surprised by: **an ACM
-certificate used by CloudFront must live in `us-east-1`**, regardless of where
-everything else runs. Do not create it yet; just do not be alarmed when the
-Terraform asks for a provider aliased to `us-east-1`.
+Development runs in **`us-east-1`**. Of the two permitted regions it is the
+better one:
+
+- **CloudFront requires its certificate in `us-east-1` regardless.** This is an
+  AWS constraint, not a policy one, and it does not go away. Running the stack
+  there keeps everything in a single region; running it in `us-west-1` splits
+  it across two.
+- `us-east-1` has six availability zones, `us-west-1` has two.
+
+If the production region should be European, that means amending the policy —
+a decision for whoever set it, and worth understanding before changing.
 
 ### 3. Access
 
