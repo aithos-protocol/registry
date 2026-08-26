@@ -188,6 +188,43 @@ async fn an_entry_lives_its_whole_life() {
     assert_eq!(list.len(), 3, "three publications, three versions");
     assert_eq!(list[0]["cardVersion"], json!("2.0.0"), "newest first");
 
+    // A publisher may legitimately create thousands of versions, so the history
+    // pages rather than silently returning whatever fits in one query.
+    let first_page = get(
+        &client,
+        &origin,
+        &format!("/v1/agents/{agent_id}/versions?limit=2"),
+    )
+    .await;
+    first_page.expect(200, "first page of history");
+    let first_page = first_page.json();
+    assert_eq!(first_page["versions"].as_array().unwrap().len(), 2);
+
+    let cursor = first_page["nextCursor"]
+        .as_str()
+        .expect("a third version remains");
+    let second_page = get(
+        &client,
+        &origin,
+        &format!("/v1/agents/{agent_id}/versions?limit=2&cursor={cursor}"),
+    )
+    .await;
+    second_page.expect(200, "second page of history");
+    let second_page = second_page.json();
+    assert_eq!(second_page["versions"].as_array().unwrap().len(), 1);
+    assert_eq!(second_page["versions"][0]["cardVersion"], json!("1.0.0"));
+
+    // A digest this agent never published is not served, even though the object
+    // store would happily answer for one left behind by a failed commit.
+    let unpublished = "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+    get(
+        &client,
+        &origin,
+        &format!("/v1/agents/{agent_id}/versions/{unpublished}/agent-card.json"),
+    )
+    .await
+    .expect(404, "a digest that was never published");
+
     // The current card at the edge must have followed the rotation.
     let served = get_until(
         &client,
@@ -227,6 +264,17 @@ async fn an_entry_lives_its_whole_life() {
         .await
         .expect(200, "the record survives withdrawal");
 
+    // The keys follow the card. Serving them for a withdrawn entry would let a
+    // copy of the old card keep looking verifiable.
+    get_until(
+        &client,
+        &origin,
+        &format!("/v1/agents/{agent_id}/jwks.json"),
+        |r| r.status == 404 || r.status == 410,
+        "jwks after withdrawal",
+    )
+    .await;
+
     // ...but what was published is not erased.
     get(
         &client,
@@ -265,12 +313,28 @@ async fn writes_are_refused_for_the_right_reasons() {
     .expect(403, "another key writing to an existing entry")
     .expect_code("NOT_AUTHORIZED_KEY");
 
-    // A version that does not move forward is refused. This is the replay
-    // defence: the body below is byte-identical to one anybody could have
-    // observed, and it is still validly signed.
+    // Resending exactly what is already published changes nothing, so it
+    // succeeds. A client retrying after a network timeout does this routinely,
+    // and the write it is retrying may well have gone through.
+    let repeated = put(&client, &origin, &agent_id, &first_body).await;
+    repeated.expect(200, "identical resubmission");
+    assert_eq!(
+        repeated.json()["seq"],
+        json!(1),
+        "a no-op must not advance the sequence"
+    );
+    assert_eq!(repeated.json()["cardDigest"], json!(digest));
+
+    // Rolling the entry back is the replay that matters, and it is refused.
+    // The body below is validly signed and anybody could have observed it.
+    let (second, _) = sign_card(card_body("2.0.0", "refusals"), &[&owner]);
+    put(&client, &origin, &agent_id, &write_body(&second, &[&owner]))
+        .await
+        .expect(200, "moving forward");
+
     put(&client, &origin, &agent_id, &first_body)
         .await
-        .expect(409, "replay of an observed card")
+        .expect(409, "replay of a superseded card")
         .expect_code("VERSION_NOT_INCREASING");
 
     // Private key material is refused before anything is stored.
@@ -308,13 +372,54 @@ async fn writes_are_refused_for_the_right_reasons() {
         json!("/capabilities/extensions")
     );
 
-    // Leave the entry withdrawn rather than active.
+    // Leave the entry withdrawn rather than active. The payload binds the
+    // current digest, so it has to be re-read after the publications above.
+    let current = get(&client, &origin, &format!("/v1/agents/{agent_id}")).await;
+    let current_digest = current.json()["cardDigest"].as_str().unwrap().to_string();
     delete(
         &client,
         &origin,
         &agent_id,
-        &withdraw_body(&owner, &origin, &agent_id, &digest),
+        &withdraw_body(&owner, &origin, &agent_id, &current_digest),
     )
     .await
     .expect(200, "withdrawal");
+}
+
+/// Input a client controls must never surface as a server fault: a 5xx budget
+/// that anyone can spend from is an alarm nobody will trust.
+#[tokio::test]
+#[ignore = "runs against a deployed environment; set REGISTRY_E2E_ORIGIN"]
+async fn a_forged_pagination_cursor_is_a_client_error() {
+    let (origin, client) = (origin(), client());
+
+    for cursor in ["not-base64!!", "eyJwayI6IkFHRU5UI3gifQ", "e30"] {
+        let response = get(
+            &client,
+            &origin,
+            &format!("/v1/agents?limit=2&cursor={cursor}"),
+        )
+        .await;
+        assert_eq!(
+            response.status,
+            400,
+            "cursor {cursor:?}: expected 400, got {} with body {}",
+            response.status,
+            String::from_utf8_lossy(&response.bytes)
+        );
+        response.expect_code("CURSOR_INVALID");
+    }
+
+    // A cursor the registry issued itself keeps working.
+    let first = get(&client, &origin, "/v1/agents?limit=1").await;
+    first.expect(200, "first page");
+    if let Some(cursor) = first.json()["nextCursor"].as_str() {
+        get(
+            &client,
+            &origin,
+            &format!("/v1/agents?limit=1&cursor={cursor}"),
+        )
+        .await
+        .expect(200, "second page");
+    }
 }

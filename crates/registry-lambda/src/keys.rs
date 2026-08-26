@@ -20,6 +20,14 @@ pub fn version_sk(seq: u64) -> String {
     format!("VERSION#{seq:020}")
 }
 
+/// Sort key of the digest index: answers "did this agent publish this exact
+/// document" with a single lookup, which is what lets a historical read refuse
+/// to serve an object whose commit never landed.
+pub fn digest_sk(digest: &str) -> String {
+    let hex = digest.strip_prefix("sha256:").unwrap_or(digest);
+    format!("DIGEST#{hex}")
+}
+
 /// The single partition of the listing index.
 pub const LIST_PK: &str = "LIST";
 
@@ -64,6 +72,12 @@ mod tests {
         let mut keys = [version_sk(2), version_sk(10), version_sk(1)];
         keys.sort();
         assert_eq!(keys, [version_sk(1), version_sk(2), version_sk(10)]);
+    }
+
+    #[test]
+    fn digest_sort_keys_are_prefix_insensitive() {
+        assert_eq!(digest_sk("sha256:dead"), digest_sk("dead"));
+        assert!(digest_sk("sha256:dead").starts_with("DIGEST#"));
     }
 
     #[test]

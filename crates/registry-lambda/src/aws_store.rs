@@ -90,6 +90,30 @@ impl AwsStore {
     /// therefore leaves CloudFront serving the previous version until the next
     /// publication, which is why it is logged loudly rather than swallowed.
     async fn refresh_current_pointers(&self, commit: &Commit) {
+        // Two publications close together can have their pointer writes
+        // reordered, leaving the edge serving the older card until someone
+        // publishes again — which may never happen. Re-reading the committed
+        // sequence first does not close that window, but it narrows it to the
+        // gap between this check and the write below. Closing it properly
+        // means reconciling from the table itself, outside the request path.
+        match self.get_agent(&commit.agent_id).await {
+            Ok(Some(current)) if current.seq > commit.seq => {
+                tracing::info!(
+                    agent_id = %commit.agent_id,
+                    superseded = commit.seq,
+                    current = current.seq,
+                    "skipping a pointer refresh that a later publication already overtook"
+                );
+                return;
+            }
+            Ok(_) => {}
+            Err(error) => tracing::warn!(
+                %error,
+                agent_id = %commit.agent_id,
+                "could not confirm the committed sequence before refreshing pointers"
+            ),
+        }
+
         let jwks = json!({ "keys": commit.keys }).to_string();
         let attempts = [
             (
@@ -184,6 +208,12 @@ impl Store for AwsStore {
             .set_item(Some(item::version_item(&commit.agent_id, &version)))
             .condition_expression("attribute_not_exists(sk)");
 
+        // Written in the same transaction as the version itself, so the index
+        // can never disagree with what it indexes.
+        let digest_put = Put::builder()
+            .table_name(&self.table)
+            .set_item(Some(item::digest_item(&commit.agent_id, &version)));
+
         self.ddb
             .transact_write_items()
             .transact_items(
@@ -194,6 +224,11 @@ impl Store for AwsStore {
             .transact_items(
                 TransactWriteItem::builder()
                     .put(version_put.build().map_err(backend)?)
+                    .build(),
+            )
+            .transact_items(
+                TransactWriteItem::builder()
+                    .put(digest_put.build().map_err(backend)?)
                     .build(),
             )
             .send()
@@ -239,6 +274,35 @@ impl Store for AwsStore {
         let item = out
             .attributes
             .ok_or_else(|| StoreError::Backend("update returned no attributes".into()))?;
+
+        // The status change alone would leave the entry published. The public
+        // read path is served from the object store, which the API never sees,
+        // and withdrawal is terminal — so no later publication would ever
+        // overwrite these pointers. Without this, the one purpose of
+        // withdrawal is defeated on the path that carries the traffic.
+        //
+        // Only the pointers go. The immutable objects under `versions/` are
+        // the record of what was published and are never touched; the IAM
+        // policy enforces that boundary rather than leaving it to this code.
+        //
+        // No cache invalidation is issued: the pointers carry a 60 second TTL,
+        // which already bounds how long a withdrawn card can still be served,
+        // and buying a few seconds is not worth another permission.
+        for key in [
+            keys::current_card_key(agent_id),
+            keys::current_jwks_key(agent_id),
+        ] {
+            self.s3
+                .delete_object()
+                .bucket(&self.bucket)
+                .key(&key)
+                .send()
+                .await
+                .map_err(|error| {
+                    StoreError::Backend(format!("withdrawn but {key} still published: {error}"))
+                })?;
+        }
+
         item::agent_record(&item).map_err(backend)
     }
 
@@ -268,8 +332,13 @@ impl Store for AwsStore {
         }
     }
 
-    async fn list_versions(&self, agent_id: &str) -> StoreResult<Vec<VersionRecord>> {
-        let out = self
+    async fn list_versions(
+        &self,
+        agent_id: &str,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> StoreResult<Page<VersionRecord>> {
+        let mut query = self
             .ddb
             .query()
             .table_name(&self.table)
@@ -277,15 +346,52 @@ impl Store for AwsStore {
             .expression_attribute_values(":pk", Av::S(keys::agent_pk(agent_id)))
             .expression_attribute_values(":prefix", Av::S("VERSION#".into()))
             .scan_index_forward(false)
+            .limit(limit as i32);
+
+        if let Some(cursor) = cursor {
+            let seq: u64 = cursor.parse().map_err(|_| StoreError::BadCursor)?;
+            query = query.set_exclusive_start_key(Some(Item::from([
+                ("pk".to_string(), Av::S(keys::agent_pk(agent_id))),
+                ("sk".to_string(), Av::S(keys::version_sk(seq))),
+            ])));
+        }
+
+        let out = query.send().await.map_err(backend)?;
+        let items: Vec<VersionRecord> = out
+            .items
+            .unwrap_or_default()
+            .iter()
+            .map(|i| item::version_record(i).map_err(backend))
+            .collect::<StoreResult<_>>()?;
+
+        // The cursor is the sequence itself: an agent's versions are keyed by
+        // it, so nothing else is needed to resume, and a forged one cannot
+        // address anything outside this agent's partition.
+        let next_cursor = out
+            .last_evaluated_key
+            .as_ref()
+            .and_then(|_| items.last().map(|v| v.seq.to_string()));
+        Ok(Page { items, next_cursor })
+    }
+
+    async fn find_version(
+        &self,
+        agent_id: &str,
+        digest: &str,
+    ) -> StoreResult<Option<VersionRecord>> {
+        let out = self
+            .ddb
+            .get_item()
+            .table_name(&self.table)
+            .key("pk", Av::S(keys::agent_pk(agent_id)))
+            .key("sk", Av::S(keys::digest_sk(digest)))
             .send()
             .await
             .map_err(backend)?;
 
-        out.items
-            .unwrap_or_default()
-            .iter()
-            .map(|i| item::version_record(i).map_err(backend))
-            .collect()
+        out.item
+            .map(|i| item::version_record(&i).map_err(backend))
+            .transpose()
     }
 
     async fn list_agents(
@@ -333,19 +439,22 @@ fn encode_cursor(key: &Item) -> String {
 }
 
 fn decode_cursor(cursor: &str) -> StoreResult<Item> {
-    let raw = base64url_decode(cursor)
-        .ok_or_else(|| StoreError::Backend("cursor is not valid base64url".into()))?;
-    let value: serde_json::Value = serde_json::from_slice(&raw)
-        .map_err(|_| StoreError::Backend("cursor is not valid JSON".into()))?;
-    let obj = value
-        .as_object()
-        .ok_or_else(|| StoreError::Backend("cursor is not an object".into()))?;
+    let raw = base64url_decode(cursor).ok_or(StoreError::BadCursor)?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&raw).map_err(|_| StoreError::BadCursor)?;
+    let obj = value.as_object().ok_or(StoreError::BadCursor)?;
     let allowed: BTreeSet<&str> = ["pk", "sk", "gsi1pk", "gsi1sk"].into_iter().collect();
-    Ok(obj
+    let key: Item = obj
         .iter()
         .filter(|(k, _)| allowed.contains(k.as_str()))
         .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), Av::S(s.to_string()))))
-        .collect())
+        .collect();
+    // A cursor missing a key attribute would reach DynamoDB and come back as a
+    // validation error, which this code would then report as a server fault.
+    if key.len() != allowed.len() {
+        return Err(StoreError::BadCursor);
+    }
+    Ok(key)
 }
 
 fn base64url(bytes: &[u8]) -> String {

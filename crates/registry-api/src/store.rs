@@ -21,6 +21,11 @@ pub enum StoreError {
     /// re-reads and re-evaluates, or reports a conflict.
     #[error("the agent was modified concurrently")]
     Conflict,
+    /// A pagination cursor that this backend cannot use. Cursors come from
+    /// clients, so a bad one is a client error — mapping it to a 500 would let
+    /// anyone fill the error budget with forged input.
+    #[error("the pagination cursor is not valid")]
+    BadCursor,
     #[error("storage backend failure: {0}")]
     Backend(String),
 }
@@ -100,7 +105,28 @@ pub trait Store: Send + Sync + 'static {
     /// The currently authorized public JWKs.
     async fn get_keys(&self, agent_id: &str) -> StoreResult<Option<Vec<serde_json::Value>>>;
 
-    async fn list_versions(&self, agent_id: &str) -> StoreResult<Vec<VersionRecord>>;
+    /// One page of an agent's version history, newest first.
+    ///
+    /// Paginated because a publisher may legitimately create thousands of
+    /// versions, and a single unpaginated query would silently return only the
+    /// first page worth of them.
+    async fn list_versions(
+        &self,
+        agent_id: &str,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> StoreResult<Page<VersionRecord>>;
+
+    /// The version an agent published under this digest, if any.
+    ///
+    /// Card objects are written before the transaction that commits them, so a
+    /// failed commit leaves one behind. Serving bytes without checking this
+    /// would mean answering for something the registry never published.
+    async fn find_version(
+        &self,
+        agent_id: &str,
+        digest: &str,
+    ) -> StoreResult<Option<VersionRecord>>;
 
     async fn list_agents(
         &self,

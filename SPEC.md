@@ -246,8 +246,14 @@ Content-Type: application/json
 ```
 
 No `Idempotency-Key` header is required. `agentId` is client-derived and the
-operation is idempotent by construction: submitting identical bytes twice
-yields the same stored version.
+operation is idempotent by construction: submitting bytes identical to the
+current version succeeds with `200` and changes nothing, including the
+sequence. A client retrying after a network timeout does exactly this, and the
+write it is retrying may well have succeeded — answering it with a conflict
+would report failure for an operation that worked.
+
+The test is on the digest, not on the content. Different bytes at the same
+version are still refused by §6.4, whatever they contain.
 
 ### 6.2 Creation
 
@@ -319,7 +325,7 @@ The decoded payload is exactly:
   "agentId": "<agentId>",
   "cardDigest": "sha256:<hex>",
   "issuedAt": "2026-08-25T12:00:00.000Z",
-  "registryOrigin": "https://registry.aithos.be"
+  "registryOrigin": "https://registry.aithos.world"
 }
 ```
 
@@ -329,9 +335,18 @@ withdrawal. `registryOrigin` MUST equal this registry's canonical origin. The
 signature MUST be by a key in the current authorized set, and the protected
 header follows §5.5.
 
-The agent becomes `WITHDRAWN`. Withdrawal is terminal in V1: the `agentId` is
-never reusable, so the identifier cannot be recycled to point at different
-content.
+The agent becomes `WITHDRAWN`, and the registry MUST stop serving its current
+card and its JWKS. This is not implied by the status change: the public read
+path may be answered by a cache or an object store that never sees the API, and
+because withdrawal is terminal no later publication would ever overwrite what
+those hold. A registry that only flips a flag leaves the card published, which
+defeats the one purpose of withdrawal.
+
+Published versions remain readable at their digest. What was published is not
+erased; only its current status changes.
+
+Withdrawal is terminal in V1: the `agentId` is never reusable, so the
+identifier cannot be recycled to point at different content.
 
 ## 7. Public endpoints
 

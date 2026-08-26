@@ -117,11 +117,44 @@ impl Store for MemoryStore {
         Ok(self.inner.lock().unwrap().keys.get(agent_id).cloned())
     }
 
-    async fn list_versions(&self, agent_id: &str) -> StoreResult<Vec<VersionRecord>> {
+    async fn list_versions(
+        &self,
+        agent_id: &str,
+        limit: usize,
+        cursor: Option<&str>,
+    ) -> StoreResult<Page<VersionRecord>> {
         let inner = self.inner.lock().unwrap();
         let mut versions = inner.versions.get(agent_id).cloned().unwrap_or_default();
         versions.sort_by_key(|v| std::cmp::Reverse(v.seq));
-        Ok(versions)
+
+        let start = match cursor {
+            None => 0,
+            Some(raw) => {
+                let seq: u64 = raw.parse().map_err(|_| StoreError::BadCursor)?;
+                versions
+                    .iter()
+                    .position(|v| v.seq == seq)
+                    .map_or(0, |i| i + 1)
+            }
+        };
+        let items: Vec<VersionRecord> = versions.iter().skip(start).take(limit).cloned().collect();
+        let next_cursor = (start + items.len() < versions.len())
+            .then(|| items.last().map(|v| v.seq.to_string()))
+            .flatten();
+        Ok(Page { items, next_cursor })
+    }
+
+    async fn find_version(
+        &self,
+        agent_id: &str,
+        digest: &str,
+    ) -> StoreResult<Option<VersionRecord>> {
+        let inner = self.inner.lock().unwrap();
+        Ok(inner
+            .versions
+            .get(agent_id)
+            .and_then(|v| v.iter().find(|v| v.card_digest == digest))
+            .cloned())
     }
 
     async fn list_agents(

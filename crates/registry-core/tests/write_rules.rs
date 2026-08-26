@@ -5,7 +5,7 @@ mod common;
 use std::collections::BTreeSet;
 
 use common::{Signer, card_body, sign_card, sign_card_with, sign_payload};
-use registry_core::{AgentState, Code, Status, evaluate_withdrawal, evaluate_write};
+use registry_core::{AgentState, Code, Outcome, Status, evaluate_withdrawal, evaluate_write};
 use semver::Version;
 use serde_json::{Value, json};
 
@@ -33,7 +33,7 @@ fn creation_names_the_entry_after_its_genesis_key() {
     let card = sign_card(card_body("1.0.0"), &[&k]);
 
     let accepted = evaluate_write(&k.kid(), &card, &[k.jwk()], None).unwrap();
-    assert!(accepted.is_creation);
+    assert!(accepted.is_creation());
     assert_eq!(accepted.agent_id, k.kid());
     assert_eq!(accepted.authorized_kids, kids(&[&k.kid()]));
     assert_eq!(accepted.card_digest, card.digest);
@@ -65,7 +65,7 @@ fn update_signed_by_the_authorized_key_is_accepted() {
     let current = state(&k.kid(), "1.0.0", "sha256:old", &[k.kid()]);
 
     let accepted = evaluate_write(&k.kid(), &card, &[k.jwk()], Some(&current)).unwrap();
-    assert!(!accepted.is_creation);
+    assert!(!accepted.is_creation());
     assert_eq!(accepted.card_version, Version::parse("1.1.0").unwrap());
 }
 
@@ -128,14 +128,63 @@ fn replaying_an_older_card_is_refused() {
     assert_eq!(err.code, Code::VersionNotIncreasing);
 }
 
+/// A client that retries after a network timeout sends the same bytes again.
+/// That happens routinely — the write may have succeeded and only the response
+/// been lost — so it reports success rather than a conflict.
 #[test]
-fn resubmitting_the_same_version_is_refused() {
+fn resubmitting_identical_bytes_is_a_no_op() {
     let k = Signer::p256();
     let card = sign_card(card_body("1.5.0"), &[&k]);
-    let current = state(&k.kid(), "1.5.0", "sha256:current", &[k.kid()]);
+    let current = state(&k.kid(), "1.5.0", &card.digest, &[k.kid()]);
 
-    let err = evaluate_write(&k.kid(), &card, &[k.jwk()], Some(&current)).unwrap_err();
+    let accepted = evaluate_write(&k.kid(), &card, &[k.jwk()], Some(&current)).unwrap();
+    assert_eq!(accepted.outcome, Outcome::Unchanged);
+    assert_eq!(accepted.card_digest, card.digest);
+}
+
+/// Signing twice reproduces the same document, so re-signing unchanged content
+/// is indistinguishable from resubmitting it.
+///
+/// All three accepted algorithms are deterministic: ES256 through RFC 6979,
+/// EdDSA by construction, RS256 through PKCS#1 v1.5. A client signing with a
+/// randomised ECDSA implementation would produce a different document for the
+/// same content, and would then need a new version like any other change —
+/// which is why the rule is stated on the digest and not on the content.
+#[test]
+fn signing_the_same_content_twice_reproduces_the_same_document() {
+    let k = Signer::p256();
+    let first = sign_card(card_body("1.5.0"), &[&k]);
+    let second = sign_card(card_body("1.5.0"), &[&k]);
+    assert_eq!(first.digest, second.digest);
+}
+
+/// Different content at the same version is refused, whoever signed it. This
+/// is the invariant the no-op case must not weaken.
+#[test]
+fn different_content_at_the_same_version_is_refused() {
+    let k = Signer::p256();
+    let published = sign_card(card_body("1.5.0"), &[&k]);
+    let mut edited = card_body("1.5.0");
+    edited["name"] = serde_json::json!("Renamed without bumping");
+    let edited = sign_card(edited, &[&k]);
+    assert_ne!(published.digest, edited.digest);
+
+    let current = state(&k.kid(), "1.5.0", &published.digest, &[k.kid()]);
+    let err = evaluate_write(&k.kid(), &edited, &[k.jwk()], Some(&current)).unwrap_err();
     assert_eq!(err.code, Code::VersionNotIncreasing);
+}
+
+/// An unauthorized caller must not be able to probe whether its bytes match
+/// the published ones: the lineage rule is checked first.
+#[test]
+fn an_identical_resubmission_from_a_stranger_is_still_refused() {
+    let owner = Signer::p256();
+    let stranger = Signer::p256();
+    let card = sign_card(card_body("1.5.0"), &[&stranger]);
+    let current = state(&owner.kid(), "1.5.0", &card.digest, &[owner.kid()]);
+
+    let err = evaluate_write(&owner.kid(), &card, &[stranger.jwk()], Some(&current)).unwrap_err();
+    assert_eq!(err.code, Code::NotAuthorizedKey);
 }
 
 #[test]

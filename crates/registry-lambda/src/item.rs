@@ -114,6 +114,15 @@ pub fn version_item(agent_id: &str, record: &VersionRecord) -> Item {
     item
 }
 
+/// The digest index entry. It carries the whole version record rather than a
+/// pointer, so a lookup by digest costs one read and cannot go stale relative
+/// to the version item written in the same transaction.
+pub fn digest_item(agent_id: &str, record: &VersionRecord) -> Item {
+    let mut item = version_item(agent_id, record);
+    item.insert("sk".into(), Av::S(keys::digest_sk(&record.card_digest)));
+    item
+}
+
 pub fn version_record(item: &Item) -> Result<VersionRecord, ItemError> {
     Ok(VersionRecord {
         seq: n(item, "seq")?,
@@ -175,6 +184,23 @@ mod tests {
         let item = version_item("agent", &record);
         assert_eq!(item["sk"].as_s().unwrap(), &keys::version_sk(10));
         assert_eq!(version_record(&item).unwrap(), record);
+    }
+
+    #[test]
+    fn the_digest_index_carries_the_same_record() {
+        let record = VersionRecord {
+            seq: 4,
+            card_digest: "sha256:feed".into(),
+            card_version: "1.0.0".into(),
+            signing_kids: ["k".to_string()].into_iter().collect(),
+            created_at: "2026-08-25T11:00:00.000Z".into(),
+        };
+        let indexed = digest_item("agent", &record);
+        assert_eq!(
+            indexed["sk"].as_s().unwrap(),
+            &keys::digest_sk("sha256:feed")
+        );
+        assert_eq!(version_record(&indexed).unwrap(), record);
     }
 
     #[test]

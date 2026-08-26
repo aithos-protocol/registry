@@ -58,6 +58,7 @@ impl Problem {
             "ALG_NOT_ALLOWED" => "Algorithm is not allowed",
             "UNUSED_KEY" => "A submitted key signs nothing",
             "CONFLICT" => "The agent changed concurrently",
+            "CURSOR_INVALID" => "Pagination cursor is not valid",
             _ => "Request rejected",
         }
     }
@@ -105,6 +106,12 @@ impl From<crate::store::StoreError> for Problem {
                 "CONFLICT",
                 "the agent was modified while this request was being processed; re-read and retry",
             ),
+            crate::store::StoreError::BadCursor => Problem::new(
+                400,
+                "CURSOR_INVALID",
+                "the `cursor` parameter did not come from this registry",
+            )
+            .at("/cursor"),
             crate::store::StoreError::Backend(d) => Problem::new(500, "INTERNAL", d),
         }
     }

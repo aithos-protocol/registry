@@ -48,10 +48,18 @@ resource "aws_s3_bucket_public_access_block" "registry" {
 }
 
 data "aws_iam_policy_document" "bucket" {
+  # ListBucket is granted alongside GetObject so that a missing object comes
+  # back as 404 rather than 403. Without it S3 refuses to distinguish "absent"
+  # from "forbidden", which is the right default for an anonymous caller — but
+  # this principal is CloudFront, which has no way to issue a ListObjects call,
+  # so nothing here becomes enumerable.
   statement {
-    sid       = "AllowCloudFrontRead"
-    actions   = ["s3:GetObject"]
-    resources = ["${aws_s3_bucket.registry.arn}/*"]
+    sid     = "AllowCloudFrontRead"
+    actions = ["s3:GetObject", "s3:ListBucket"]
+    resources = [
+      aws_s3_bucket.registry.arn,
+      "${aws_s3_bucket.registry.arn}/*",
+    ]
 
     principals {
       type        = "Service"
@@ -73,6 +81,30 @@ resource "aws_s3_bucket_policy" "registry" {
   policy = data.aws_iam_policy_document.bucket.json
 
   depends_on = [aws_s3_bucket_public_access_block.registry]
+}
+
+# Versioning keeps every overwrite, and the current-version pointers under
+# `v1/` are overwritten on every publication — so their superseded copies pile
+# up without bound while the record that matters already lives, immutably, under
+# `versions/`. Those are never overwritten and so have no non-current versions
+# for this rule to touch.
+resource "aws_s3_bucket_lifecycle_configuration" "registry" {
+  bucket = aws_s3_bucket.registry.id
+
+  rule {
+    id     = "expire-superseded-pointers"
+    status = "Enabled"
+
+    filter {
+      prefix = "v1/"
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.registry]
 }
 
 # The body CloudFront serves for a miss on the static read path. Keeping the

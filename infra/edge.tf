@@ -42,6 +42,7 @@ resource "aws_cloudfront_distribution" "registry" {
   comment         = local.name
   price_class     = var.price_class
   aliases         = [var.hostname]
+  web_acl_id      = aws_wafv2_web_acl.registry.arn
 
   origin {
     origin_id                = local.s3_origin
@@ -117,22 +118,18 @@ resource "aws_cloudfront_distribution" "registry" {
     compress               = true
   }
 
-  # S3 answers a missing object with 403 rather than 404, because the origin
-  # access control deliberately does not grant s3:ListBucket — telling an
-  # anonymous caller the difference between "absent" and "forbidden" would mean
-  # letting it enumerate the bucket. Mapping the status back is what keeps the
-  # public contract honest: an agent that was never published is not found.
+  # A custom error response applies to the WHOLE distribution, never to a
+  # single cache behaviour. Mapping 403 here would therefore rewrite the API's
+  # own 403 — a write refused because it carried no authorized key — into a
+  # meaningless 404. S3 is made to answer 404 by granting ListBucket instead,
+  # and only 404 is reshaped.
   #
-  # The TTL is deliberately short. A miss cached for minutes would make a card
-  # invisible right after it was published, which is the one moment a publisher
-  # is watching.
-  custom_error_response {
-    error_code            = 403
-    response_code         = 404
-    response_page_path    = "/errors/not-found.json"
-    error_caching_min_ttl = 5
-  }
-
+  # This still replaces the API's 404 body with the generic one. The two say
+  # the same thing, and both are RFC 9457 problems with the same code.
+  #
+  # The TTL is deliberately short: a miss cached for minutes would make a card
+  # invisible in the minute after it was published, which is exactly when its
+  # publisher is looking.
   custom_error_response {
     error_code            = 404
     response_code         = 404

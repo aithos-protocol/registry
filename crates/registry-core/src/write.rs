@@ -33,6 +33,26 @@ pub struct AgentState {
     pub authorized_kids: BTreeSet<String>,
 }
 
+/// What an accepted write does to the entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Created,
+    Updated,
+    /// The submitted bytes are the ones already published. Nothing to commit.
+    ///
+    /// This is what a client retrying after a network timeout sends, and that
+    /// happens routinely: the write may well have succeeded and only the
+    /// response was lost. Answering it with a conflict would report failure
+    /// for an operation that worked.
+    ///
+    /// The test is on the digest, not on the content: only byte-identical
+    /// resubmission qualifies. With the three accepted algorithms — all
+    /// deterministic — re-signing unchanged content reproduces the same
+    /// document and lands here too, while a client using a randomised ECDSA
+    /// implementation would produce a new document needing a new version.
+    Unchanged,
+}
+
 /// A write that passed every rule. Nothing here has touched storage yet.
 #[derive(Debug, Clone)]
 pub struct AcceptedWrite {
@@ -41,7 +61,13 @@ pub struct AcceptedWrite {
     pub card_version: Version,
     /// The keys that signed this version; this becomes the new authorized set.
     pub authorized_kids: BTreeSet<String>,
-    pub is_creation: bool,
+    pub outcome: Outcome,
+}
+
+impl AcceptedWrite {
+    pub fn is_creation(&self) -> bool {
+        self.outcome == Outcome::Created
+    }
 }
 
 /// Evaluate a `PUT /v1/agents/{agent_id}`.
@@ -75,7 +101,7 @@ pub fn evaluate_write(
 
     let card_version = parse_card_version(card)?;
 
-    let is_creation = match current {
+    let outcome = match current {
         None => {
             // §6.2(4): the identifier must be the thumbprint of a key that
             // actually signed this first version.
@@ -88,7 +114,7 @@ pub fn evaluate_write(
                     ),
                 ));
             }
-            true
+            Outcome::Created
         }
         Some(state) => {
             // §6.3(2): the lineage rule. One key from the previous set is
@@ -99,9 +125,22 @@ pub fn evaluate_write(
                     "no signature comes from a currently authorized key",
                 ));
             }
+            // An identical resubmission changes nothing, so it succeeds
+            // rather than conflicting. Checked after the lineage rule above,
+            // so an unauthorized caller learns nothing from it.
+            if card.digest == state.card_digest {
+                return Ok(AcceptedWrite {
+                    agent_id: agent_id.to_string(),
+                    card_digest: state.card_digest.clone(),
+                    card_version: state.card_version.clone(),
+                    authorized_kids: state.authorized_kids.clone(),
+                    outcome: Outcome::Unchanged,
+                });
+            }
+
             // §6.4: without a monotonic element, anyone who has merely seen an
-            // older card could re-submit it; every past version stays validly
-            // signed forever.
+            // older card could re-submit it to roll the entry back; every past
+            // version stays validly signed forever.
             if card_version <= state.card_version {
                 return Err(RegistryError::new(
                     Code::VersionNotIncreasing,
@@ -111,7 +150,7 @@ pub fn evaluate_write(
                     ),
                 ));
             }
-            false
+            Outcome::Updated
         }
     };
 
@@ -120,7 +159,7 @@ pub fn evaluate_write(
         card_digest: card.digest.clone(),
         card_version,
         authorized_kids: signing_kids,
-        is_creation,
+        outcome,
     })
 }
 

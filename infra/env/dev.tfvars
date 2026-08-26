@@ -10,3 +10,6 @@ parent_zone_name = "aithos.world"
 # positioning argument for Europe has weight, and it needs the SCP question
 # answered deliberately rather than worked around.
 region = "us-east-1"
+
+# Alarms with no subscriber are alarms nobody reads.
+alarm_email = "mathieu.colla.pro@gmail.com"

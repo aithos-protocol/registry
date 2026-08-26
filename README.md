@@ -27,6 +27,7 @@ crates/registry-core/    RFC 7638 thumbprints, JWS verification, and the
                          write-authorization rules
 crates/registry-api/     HTTP surface, storage contract, in-memory store
 crates/registry-lambda/  DynamoDB and S3 backend, Lambda entry point
+crates/registry-e2e/     tests against a deployed environment
 vectors/                 published conformance vectors
   rfc8785/               the official RFC 8785 test vectors
   a2a-sample-agent-card.json   the sample card from A2A §8.5
@@ -83,7 +84,7 @@ moves.
 ## Development
 
 ```sh
-cargo test           # 73 tests
+cargo test           # 79 tests, none of which touch a network
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p a2a-card --target wasm32-unknown-unknown
@@ -112,21 +113,40 @@ being current. DynamoDB's conditional writes express exactly that, which is why
 the `Store` contract in `registry-api` is written around a `Conflict` error
 rather than around locks.
 
+## Testing against a deployed environment
+
+```sh
+REGISTRY_E2E_ORIGIN=https://registry-dev.aithos.world \
+  cargo test -p registry-e2e -- --ignored --test-threads=1
+```
+
+These need no AWS credentials — every endpoint is public and each run generates
+its own keys — and they are `#[ignore]`d so they never run by accident. Run them
+after a deployment, before promoting a change, or while debugging.
+
+They exist because the offline suite proves the protocol and nothing else: the
+DynamoDB conditional expression, the transaction cancellation reason this code
+parses, API Gateway's body handling and CloudFront's routing were all written
+by reasoning and had never been executed. The first run found three defects,
+including a routing rule that sent every historical version to an object store
+with no such key.
+
+**They write to a real append-only registry**, so nothing they publish can be
+deleted. Each run creates as few entries as it can and ends by withdrawing them
+— which is also the only real-world coverage the withdrawal path gets.
+
 ## Status
 
-The protocol core, the HTTP surface and the AWS backend are implemented. The
-first three are covered by tests; the AWS backend's item and key mapping is
-tested by round trip, but its behaviour against a live table is not yet
-exercised — no deployment has happened.
+Deployed to development and exercised end to end. The remaining known gap is
+below; everything else the audit of 26 August raised is closed.
 
-Still to come: the Terraform stack, an integration test against a real table,
-and the browser signing client.
+### Known gap
 
-### One known gap
-
-`current/…` in S3 is a cache of the latest version, refreshed after each
-publication so CloudFront can serve reads without touching compute. The API
-itself always answers from DynamoDB and the immutable version objects, so it is
-never wrong — but if that refresh fails, CloudFront keeps serving the previous
-version until the next publication. Today this is logged loudly; the proper fix
-is a DynamoDB Streams handler that reconciles the pointers from the table.
+The `v1/agents/…` pointers are a cache of the current version, refreshed after
+each commit so the edge can serve reads without touching compute. Two
+publications close together can still have those writes reordered, leaving the
+edge on the older card until someone publishes again. The refresh now re-reads
+the committed sequence first, which narrows the window to the gap between that
+check and the write, and an alarm fires if a refresh fails outright. Closing it
+properly means reconciling the pointers from the table itself, through DynamoDB
+Streams, outside the request path.

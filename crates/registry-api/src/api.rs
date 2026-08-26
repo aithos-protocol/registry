@@ -12,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use a2a_card::CanonicalCard;
-use registry_core::{AgentState, Status, evaluate_withdrawal, evaluate_write};
+use registry_core::{AgentState, Outcome, Status, evaluate_withdrawal, evaluate_write};
 
 use crate::problem::Problem;
 use crate::store::{AgentRecord, Commit, Store};
@@ -95,6 +95,17 @@ async fn put_agent(
     let agent_state = current.as_ref().map(to_agent_state).transpose()?;
     let accepted = evaluate_write(&agent_id, &card, &keys, agent_state.as_ref())?;
 
+    // An identical resubmission is already published: answer with the current
+    // record rather than writing the same bytes again.
+    if accepted.outcome == Outcome::Unchanged {
+        let record = current.expect("an unchanged write implies an existing record");
+        return Ok((
+            StatusCode::OK,
+            axum::Json(agent_json(&record, &state.config)),
+        )
+            .into_response());
+    }
+
     let now = now_rfc3339();
     let commit = Commit {
         agent_id: agent_id.clone(),
@@ -109,13 +120,13 @@ async fn put_agent(
     };
 
     let record = state.store.commit(&commit).await?;
-    let status = if accepted.is_creation {
+    let status = if accepted.is_creation() {
         StatusCode::CREATED
     } else {
         StatusCode::OK
     };
     let mut response = (status, axum::Json(agent_json(&record, &state.config))).into_response();
-    if accepted.is_creation {
+    if accepted.is_creation() {
         let location = format!("/v1/agents/{agent_id}");
         if let Ok(v) = location.parse() {
             response.headers_mut().insert(header::LOCATION, v);
@@ -169,11 +180,7 @@ async fn get_current_card(
         .await?
         .ok_or_else(Problem::not_found)?;
     if record.status == Status::Withdrawn {
-        return Err(Problem::new(
-            410,
-            "WITHDRAWN",
-            "this entry was withdrawn by its key holder",
-        ));
+        return Err(gone());
     }
     let bytes = state
         .store
@@ -187,6 +194,17 @@ async fn get_version_card(
     State(state): State<AppState>,
     Path((agent_id, digest)): Path<(String, String)>,
 ) -> Result<Response, Problem> {
+    // The object is written before the transaction that commits it, so a
+    // failed commit leaves one behind. Requiring the version record first
+    // means the registry only ever answers for what it actually published —
+    // otherwise a card that lost a rotation race would stay downloadable to
+    // anyone holding its digest.
+    state
+        .store
+        .find_version(&agent_id, &digest)
+        .await?
+        .ok_or_else(Problem::not_found)?;
+
     // Historical versions stay readable after a withdrawal: the record of what
     // was published is not erased, only its status changes.
     let bytes = state
@@ -235,14 +253,21 @@ async fn get_agent(
 async fn list_versions(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    Query(q): Query<ListQuery>,
 ) -> Result<Response, Problem> {
     state
         .store
         .get_agent(&agent_id)
         .await?
         .ok_or_else(Problem::not_found)?;
-    let versions = state.store.list_versions(&agent_id).await?;
-    let items: Vec<Value> = versions
+    let limit = q.limit.unwrap_or(DEFAULT_PAGE).clamp(1, MAX_PAGE);
+    let page = state
+        .store
+        .list_versions(&agent_id, limit, q.cursor.as_deref())
+        .await?;
+
+    let items: Vec<Value> = page
+        .items
         .iter()
         .map(|v| {
             json!({
@@ -258,7 +283,12 @@ async fn list_versions(
             })
         })
         .collect();
-    Ok(axum::Json(json!({ "versions": items })).into_response())
+
+    let mut body = json!({ "versions": items });
+    if let Some(cursor) = page.next_cursor {
+        body["nextCursor"] = json!(cursor);
+    }
+    Ok(axum::Json(body).into_response())
 }
 
 #[derive(Debug, Deserialize)]
@@ -308,6 +338,14 @@ async fn manifest(State(state): State<AppState>) -> Response {
 }
 
 // --- helpers -------------------------------------------------------------
+
+fn gone() -> Problem {
+    Problem::new(
+        410,
+        "WITHDRAWN",
+        "this entry was withdrawn by its key holder",
+    )
+}
 
 fn card_response(bytes: Vec<u8>, digest: &str, cache: &'static str) -> Response {
     (

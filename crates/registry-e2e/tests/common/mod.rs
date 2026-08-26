@@ -224,24 +224,25 @@ fn header(response: &reqwest::Response, name: &str) -> String {
 }
 
 async fn send(request: reqwest::RequestBuilder) -> Response {
-    let response = request
-        .send()
+    try_send(request)
         .await
-        .expect("the request should reach the registry");
+        .expect("the request should reach the registry")
+}
+
+/// The fallible form, for the polling helper: a distribution that is still
+/// deploying can time out, and that is "not yet", not "broken".
+async fn try_send(request: reqwest::RequestBuilder) -> Result<Response, reqwest::Error> {
+    let response = request.send().await?;
     let status = response.status().as_u16();
     let content_type = header(&response, "content-type");
     let etag = header(&response, "etag");
-    let bytes = response
-        .bytes()
-        .await
-        .expect("the body should be readable")
-        .to_vec();
-    Response {
+    let bytes = response.bytes().await?.to_vec();
+    Ok(Response {
         status,
         bytes,
         content_type,
         etag,
-    }
+    })
 }
 
 /// Poll a public read path until it matches, or give up.
@@ -260,23 +261,31 @@ pub async fn get_until(
     const ATTEMPTS: u32 = 30;
     const EVERY: Duration = Duration::from_secs(3);
 
-    let mut last = None;
+    let mut last: Option<Result<Response, String>> = None;
     for attempt in 1..=ATTEMPTS {
-        let response = get(client, origin, path).await;
-        if accept(&response) {
-            if attempt > 1 {
-                eprintln!("  {what}: converged after {attempt} attempts");
+        match try_send(client.get(format!("{origin}{path}"))).await {
+            Ok(response) if accept(&response) => {
+                if attempt > 1 {
+                    eprintln!("  {what}: converged after {attempt} attempts");
+                }
+                return response;
             }
-            return response;
+            Ok(response) => last = Some(Ok(response)),
+            Err(error) => last = Some(Err(error.to_string())),
         }
-        last = Some(response);
         tokio::time::sleep(EVERY).await;
     }
-    let last = last.expect("at least one attempt was made");
+
+    let detail = match last.expect("at least one attempt was made") {
+        Ok(response) => format!(
+            "last status {} with body {}",
+            response.status,
+            String::from_utf8_lossy(&response.bytes)
+        ),
+        Err(error) => format!("last attempt failed to complete: {error}"),
+    };
     panic!(
-        "{what}: {path} did not converge within {}s; last status {} with body {}",
-        ATTEMPTS * EVERY.as_secs() as u32,
-        last.status,
-        String::from_utf8_lossy(&last.bytes)
+        "{what}: {path} did not converge within {}s; {detail}",
+        ATTEMPTS * EVERY.as_secs() as u32
     );
 }

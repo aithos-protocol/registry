@@ -41,13 +41,28 @@ data "aws_iam_policy_document" "lambda" {
     ]
   }
 
-  # No DeleteItem and no DeleteObject anywhere in this policy. The registry is
-  # append-only, so the runtime has no need to remove anything, and not granting
-  # the permission is a stronger guarantee than not calling the API.
+  # No DeleteItem anywhere: agent state is append-only and the runtime never
+  # needs to remove a row.
   statement {
     sid       = "Objects"
     actions   = ["s3:GetObject", "s3:PutObject"]
     resources = ["${aws_s3_bucket.registry.arn}/*"]
+  }
+
+  # Deletion is granted for the current-version pointers and nothing else.
+  #
+  # The distinction is the whole point: `versions/…` is the record of what was
+  # published and must survive everything, while `v1/agents/…` is a cache of
+  # the latest version that the edge reads. Withdrawal has to remove that cache
+  # or a withdrawn card stays published forever, since withdrawal is terminal
+  # and no later publication would overwrite it.
+  #
+  # Scoping this by prefix means the boundary is enforced by IAM rather than by
+  # the runtime remembering to respect it.
+  statement {
+    sid       = "PointersMayBeRemoved"
+    actions   = ["s3:DeleteObject"]
+    resources = ["${aws_s3_bucket.registry.arn}/v1/*"]
   }
 }
 

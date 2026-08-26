@@ -46,3 +46,27 @@ variable "price_class" {
   type        = string
   default     = "PriceClass_100"
 }
+
+variable "write_rate_limit" {
+  description = "Writes allowed per source address per five minutes, before WAF blocks. Publishing is rare by nature, so this can be tight without inconveniencing anyone real."
+  type        = number
+  default     = 100
+}
+
+variable "invocation_alarm_threshold" {
+  description = "Lambda invocations in five minutes that count as unusual. Writes are rare, so a sustained rate is not growth."
+  type        = number
+  default     = 500
+}
+
+variable "monthly_budget_eur" {
+  description = "Monthly cost ceiling for the alarm. The stack costs about a euro at rest."
+  type        = string
+  default     = "20"
+}
+
+variable "alarm_email" {
+  description = "Address that receives alarms and budget notifications. Alarms with no subscriber are alarms nobody reads."
+  type        = string
+  default     = null
+}
