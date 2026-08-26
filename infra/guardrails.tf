@@ -126,26 +126,15 @@ resource "aws_cloudwatch_metric_alarm" "function_errors" {
   alarm_actions     = [aws_sns_topic.alarms.arn]
 }
 
-# The pointer refresh that follows a commit logs an error when it fails, and
-# without this nobody would ever read that log. A stale pointer means the edge
-# serves a superseded card until the next publication, which may never come.
-resource "aws_cloudwatch_log_metric_filter" "pointer_failures" {
-  name           = "${local.name}-pointer-failures"
-  log_group_name = aws_cloudwatch_log_group.lambda.name
-  pattern        = "{ $.level = \"ERROR\" && $.fields.message = \"*pointer*\" }"
-
-  metric_transformation {
-    name          = "PointerRefreshFailures"
-    namespace     = "AgentCardRegistry/${var.environment}"
-    value         = "1"
-    default_value = "0"
-  }
-}
-
-resource "aws_cloudwatch_metric_alarm" "pointer_failures" {
-  alarm_name          = "${local.name}-pointer-failures"
-  namespace           = "AgentCardRegistry/${var.environment}"
-  metric_name         = aws_cloudwatch_log_metric_filter.pointer_failures.metric_transformation[0].name
+# The reconciler owns the read-path pointers. If it fails, a published card is
+# not visible at the edge and a withdrawn one is still being served — neither of
+# which the API would notice, since it answers correctly from the table either
+# way. This is the only signal that the public surface has drifted from the
+# record.
+resource "aws_cloudwatch_metric_alarm" "reconciler_errors" {
+  alarm_name          = "${local.name}-reconciler-errors"
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
   statistic           = "Sum"
   period              = 300
   evaluation_periods  = 1
@@ -153,7 +142,26 @@ resource "aws_cloudwatch_metric_alarm" "pointer_failures" {
   comparison_operator = "GreaterThanOrEqualToThreshold"
   treat_missing_data  = "notBreaching"
 
-  alarm_description = "A published card is not visible at the edge and will stay that way until the next publication."
+  alarm_description = "The public read path has drifted from the committed state: a card is published but invisible, or withdrawn but still served."
+  dimensions        = { FunctionName = aws_lambda_function.reconciler.function_name }
+  alarm_actions     = [aws_sns_topic.alarms.arn]
+}
+
+# A record the reconciler can never process would otherwise be dropped after its
+# retries and leave one agent's pointers wrong indefinitely.
+resource "aws_cloudwatch_metric_alarm" "reconciler_dropped" {
+  alarm_name          = "${local.name}-reconciler-dropped"
+  namespace           = "AWS/Lambda"
+  metric_name         = "IteratorAge"
+  statistic           = "Maximum"
+  period              = 300
+  evaluation_periods  = 1
+  threshold           = 300000
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_description = "The reconciler is falling behind the stream."
+  dimensions        = { FunctionName = aws_lambda_function.reconciler.function_name }
   alarm_actions     = [aws_sns_topic.alarms.arn]
 }
 

@@ -82,67 +82,6 @@ impl AwsStore {
             .map_err(backend)?;
         Ok(())
     }
-
-    /// Refresh the objects CloudFront serves on the public read path.
-    ///
-    /// These are a cache, not the source of truth: the API answers from
-    /// DynamoDB and the immutable version objects regardless. A failure here
-    /// therefore leaves CloudFront serving the previous version until the next
-    /// publication, which is why it is logged loudly rather than swallowed.
-    async fn refresh_current_pointers(&self, commit: &Commit) {
-        // Two publications close together can have their pointer writes
-        // reordered, leaving the edge serving the older card until someone
-        // publishes again — which may never happen. Re-reading the committed
-        // sequence first does not close that window, but it narrows it to the
-        // gap between this check and the write below. Closing it properly
-        // means reconciling from the table itself, outside the request path.
-        match self.get_agent(&commit.agent_id).await {
-            Ok(Some(current)) if current.seq > commit.seq => {
-                tracing::info!(
-                    agent_id = %commit.agent_id,
-                    superseded = commit.seq,
-                    current = current.seq,
-                    "skipping a pointer refresh that a later publication already overtook"
-                );
-                return;
-            }
-            Ok(_) => {}
-            Err(error) => tracing::warn!(
-                %error,
-                agent_id = %commit.agent_id,
-                "could not confirm the committed sequence before refreshing pointers"
-            ),
-        }
-
-        let jwks = json!({ "keys": commit.keys }).to_string();
-        let attempts = [
-            (
-                keys::current_card_key(&commit.agent_id),
-                commit.card_bytes.clone(),
-                "application/a2a+json",
-            ),
-            (
-                keys::current_jwks_key(&commit.agent_id),
-                jwks.into_bytes(),
-                "application/jwk-set+json",
-            ),
-        ];
-        for (key, body, content_type) in attempts {
-            if let Err(error) = self
-                .put_object(&key, body, content_type, "public, max-age=60")
-                .await
-            {
-                tracing::error!(
-                    %key,
-                    %error,
-                    agent_id = %commit.agent_id,
-                    seq = commit.seq,
-                    "the current-version pointer was not refreshed; CloudFront will serve the \
-                     previous version until the next publication"
-                );
-            }
-        }
-    }
 }
 
 #[async_trait]
@@ -157,8 +96,13 @@ impl Store for AwsStore {
     async fn commit(&self, commit: &Commit) -> StoreResult<AgentRecord> {
         // The card object goes in first. It is addressed by its own digest, so
         // writing it twice is writing the same object, and if the transaction
-        // below fails it is left orphaned and harmless. The reverse order would
-        // let a committed version point at bytes that were never stored.
+        // below fails it is left orphaned — harmless, and unreachable, since a
+        // historical read requires the version record too.
+        //
+        // The current-version pointers are not written here. They are owned by
+        // the stream reconciler, which sees an agent's transitions in commit
+        // order; writing them from two places would reintroduce exactly the
+        // reordering this split exists to prevent.
         self.put_object(
             &keys::card_object_key(&commit.agent_id, &commit.card_digest),
             commit.card_bytes.clone(),
@@ -235,8 +179,6 @@ impl Store for AwsStore {
             .await
             .map_err(transaction_error)?;
 
-        self.refresh_current_pointers(commit).await;
-
         // `createdAt` is only correct here for a creation; re-read so that an
         // update reports the original creation time rather than this write's.
         match self.get_agent(&commit.agent_id).await? {
@@ -275,33 +217,9 @@ impl Store for AwsStore {
             .attributes
             .ok_or_else(|| StoreError::Backend("update returned no attributes".into()))?;
 
-        // The status change alone would leave the entry published. The public
-        // read path is served from the object store, which the API never sees,
-        // and withdrawal is terminal — so no later publication would ever
-        // overwrite these pointers. Without this, the one purpose of
-        // withdrawal is defeated on the path that carries the traffic.
-        //
-        // Only the pointers go. The immutable objects under `versions/` are
-        // the record of what was published and are never touched; the IAM
-        // policy enforces that boundary rather than leaving it to this code.
-        //
-        // No cache invalidation is issued: the pointers carry a 60 second TTL,
-        // which already bounds how long a withdrawn card can still be served,
-        // and buying a few seconds is not worth another permission.
-        for key in [
-            keys::current_card_key(agent_id),
-            keys::current_jwks_key(agent_id),
-        ] {
-            self.s3
-                .delete_object()
-                .bucket(&self.bucket)
-                .key(&key)
-                .send()
-                .await
-                .map_err(|error| {
-                    StoreError::Backend(format!("withdrawn but {key} still published: {error}"))
-                })?;
-        }
+        // The pointers are not removed here either. The status change above
+        // reaches the reconciler through the stream, and it purges them by the
+        // same path a publication takes.
 
         item::agent_record(&item).map_err(backend)
     }

@@ -2263,6 +2263,7 @@ dependencies = [
  "aws-sdk-s3",
  "base64ct",
  "lambda_http",
+ "lambda_runtime",
  "registry-api",
  "registry-core",
  "serde",

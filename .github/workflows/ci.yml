@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # A failure in CI should be a failure in the code, not a flake.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the pinned toolchain
+        run: rustup show   # honours rust-toolchain.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+
+      # The end-to-end tests are #[ignore]d and need a deployed environment, so
+      # they are absent here by construction rather than by exclusion.
+      - run: cargo test --all
+
+      # The deterministic core is meant to run in the browser that signs a card.
+      # If that stops being true, the two sides can drift byte for byte.
+      - name: Check that a2a-card still builds for the browser
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build -p a2a-card --target wasm32-unknown-unknown
+
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: rustsec/audit-check@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v5
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+
+      - run: terraform fmt -check -recursive
+      # No credentials and no backend: validate checks the configuration, and
+      # anything needing an account belongs in a deployment, not in CI.
+      - run: terraform init -backend=false
+      - run: terraform validate

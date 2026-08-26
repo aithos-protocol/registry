@@ -170,6 +170,14 @@ resource "aws_dynamodb_table" "registry" {
     projection_type = "ALL"
   }
 
+  # The stream is what gives the public read-path pointers a single writer that
+  # sees an agent's transitions in commit order. DynamoDB orders stream records
+  # per partition key, and every item of one agent shares one, so consuming it
+  # cannot reorder that agent's publications the way a write from the request
+  # path can.
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
+
   # This table is the only record of who controls which entry. Losing it is not
   # recoverable from S3, because the card objects carry no authorization state.
   point_in_time_recovery {
