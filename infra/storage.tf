@@ -75,6 +75,23 @@ resource "aws_s3_bucket_policy" "registry" {
   depends_on = [aws_s3_bucket_public_access_block.registry]
 }
 
+# The body CloudFront serves for a miss on the static read path. Keeping the
+# shape of an RFC 9457 problem means a client parses one error format whether it
+# was answered by the edge or by the API.
+resource "aws_s3_object" "not_found" {
+  bucket       = aws_s3_bucket.registry.id
+  key          = "errors/not-found.json"
+  content_type = "application/problem+json"
+
+  content = jsonencode({
+    type   = "/problems/not-found"
+    title  = "Not found"
+    status = 404
+    code   = "NOT_FOUND"
+    detail = "No such agent card in this registry."
+  })
+}
+
 # --- DynamoDB: agent state ---------------------------------------------------
 
 resource "aws_dynamodb_table" "registry" {

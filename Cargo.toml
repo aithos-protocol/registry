@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda"]
+members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,4 +24,5 @@ aws-sdk-dynamodb = "1"
 aws-sdk-s3 = "1"
 lambda_http = "1"
 tracing = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

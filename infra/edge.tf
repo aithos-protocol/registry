@@ -74,8 +74,29 @@ resource "aws_cloudfront_distribution" "registry" {
     compress                 = true
   }
 
-  # The hot path. A wildcard may sit in the middle of a CloudFront path pattern
-  # and matches across slashes, so this reaches every agent's current card.
+  # Ordered behaviours are evaluated in the order declared, first match wins,
+  # and this one must come first.
+  #
+  # A CloudFront wildcard matches across slashes, which is what lets the
+  # patterns below reach every agent — and also what makes them too greedy:
+  # `/v1/agents/*/agent-card.json` matches
+  # `/v1/agents/{id}/versions/{digest}/agent-card.json` just as happily, which
+  # would send historical versions to an object store that has no such key.
+  # They are served by the API, so they are claimed here before the greedy
+  # pattern can take them.
+  ordered_cache_behavior {
+    path_pattern           = "/v1/agents/*/versions/*"
+    target_origin_id       = local.api_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+
+    cache_policy_id          = data.aws_cloudfront_cache_policy.optimized.id
+    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
+    compress                 = true
+  }
+
+  # The hot path: every agent's current card, straight from the object store.
   ordered_cache_behavior {
     path_pattern           = "/v1/agents/*/agent-card.json"
     target_origin_id       = local.s3_origin
@@ -94,6 +115,29 @@ resource "aws_cloudfront_distribution" "registry" {
     cached_methods         = ["GET", "HEAD"]
     cache_policy_id        = data.aws_cloudfront_cache_policy.optimized.id
     compress               = true
+  }
+
+  # S3 answers a missing object with 403 rather than 404, because the origin
+  # access control deliberately does not grant s3:ListBucket — telling an
+  # anonymous caller the difference between "absent" and "forbidden" would mean
+  # letting it enumerate the bucket. Mapping the status back is what keeps the
+  # public contract honest: an agent that was never published is not found.
+  #
+  # The TTL is deliberately short. A miss cached for minutes would make a card
+  # invisible right after it was published, which is the one moment a publisher
+  # is watching.
+  custom_error_response {
+    error_code            = 403
+    response_code         = 404
+    response_page_path    = "/errors/not-found.json"
+    error_caching_min_ttl = 5
+  }
+
+  custom_error_response {
+    error_code            = 404
+    response_code         = 404
+    response_page_path    = "/errors/not-found.json"
+    error_caching_min_ttl = 5
   }
 
   restrictions {

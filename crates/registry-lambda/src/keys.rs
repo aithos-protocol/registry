@@ -82,7 +82,10 @@ mod tests {
     #[test]
     fn current_object_keys_mirror_their_request_paths() {
         let request_path = "/v1/agents/abc/agent-card.json";
-        assert_eq!(current_card_key("abc"), request_path.trim_start_matches('/'));
+        assert_eq!(
+            current_card_key("abc"),
+            request_path.trim_start_matches('/')
+        );
         assert_eq!(current_jwks_key("abc"), "v1/agents/abc/jwks.json");
     }
 

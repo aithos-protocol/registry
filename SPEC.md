@@ -346,12 +346,21 @@ GET /v1/agents/{agentId}/agent-card.json
 ```http
 HTTP/1.1 200 OK
 Content-Type: application/a2a+json
-ETag: "sha256:<hex>"
+ETag: "<opaque>"
 Cache-Control: public, max-age=60
 ```
 
 The response body is `cardBytes`, verbatim. A `WITHDRAWN` agent returns
-`410 Gone`.
+`410 Gone`, and a missing one `404`.
+
+`ETag` is an opaque validator in the sense of RFC 9110, good for
+`If-None-Match` and nothing else. It is **not** the card digest and MUST NOT be
+parsed as one: this endpoint may be answered by a cache or an object store that
+computes its own validator.
+
+A client that needs the digest computes it from the bytes it received. That is
+not a workaround, it is the only correct behaviour — a digest handed over by
+the same server whose answer it is meant to check establishes nothing.
 
 ### 7.2 JWKS
 
@@ -375,7 +384,8 @@ The record is a projection: `agentId`, `status`, `currentVersionDigest`,
 a substitute for verifying the card.
 
 Historical versions are immutable exact bytes and use
-`Cache-Control: public, max-age=31536000, immutable`.
+`Cache-Control: public, max-age=31536000, immutable`. Their digest is in the
+request path, so it never needs carrying in a header.
 
 ### 7.4 Listing
 
