@@ -9,9 +9,8 @@ variable "environment" {
 }
 
 variable "region" {
-  description = "Primary AWS region."
+  description = "Primary AWS region. No default: the organization's service control policy restricts which regions are usable, so this must be a deliberate choice per environment rather than something inherited silently."
   type        = string
-  default     = "eu-west-3"
 }
 
 variable "hostname" {

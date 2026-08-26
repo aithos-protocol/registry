@@ -32,6 +32,9 @@ provider "aws" {
 
 # CloudFront can only use a certificate issued in us-east-1, wherever the rest
 # of the stack lives. This alias exists for that one resource.
+#
+# It stays even when var.region is already us-east-1. Removing it would bake in
+# an assumption about the region, and the production region is not settled.
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"

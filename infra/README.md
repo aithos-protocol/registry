@@ -23,12 +23,38 @@ The runtime role grants no `DeleteItem` and no `DeleteObject`. The registry is
 append-only, so the runtime never needs to remove anything, and withholding the
 permission is a stronger guarantee than not calling the API.
 
+## Regions
+
+The organization's service control policy permits **only `us-east-1` and
+`us-west-1`**. Every European region is denied, and so is `us-west-2`: the
+allowlist is exactly two regions. The policy lives in the management account
+and its intent is not documented here.
+
+Development therefore runs in `us-east-1`, which is where CloudFront requires
+its certificate anyway, so the whole stack sits in one region.
+
+**The production region is a separate, open decision.** Nothing technical
+argues for Europe — every card this registry holds is public by design, so
+there is no personal data and no jurisdiction question, and CloudFront serves
+readers from an edge near them whatever the origin region. The argument for
+Europe is commercial: a Belgian company selling trust infrastructure, hosted
+entirely in the United States, is a question that will be asked. Answering it
+means amending the service control policy, which is a decision for whoever set
+it, not a workaround.
+
+`var.region` deliberately has no default, so no environment inherits a region
+by accident. The `us_east_1` provider alias is kept even though development
+already runs there, so that moving production to Europe stays a variable
+change.
+
 ## Prerequisites
 
 - Terraform ≥ 1.11 — `use_lockfile` needs it, and no DynamoDB lock table is
   created anywhere in this stack.
 - An SSO profile for the target account (`aws sso login --profile …`).
-- The state bucket from `ACCOUNT-SETUP.md`, with versioning enabled.
+- The state bucket. For development it already exists:
+  `aithos-registry-tfstate-dev-373665157800`, versioned, encrypted, private,
+  with non-current versions expiring after 90 days.
 
 ## Build the Lambda package
 
@@ -48,10 +74,8 @@ that do not exist until Terraform has created the zone.
 
 **1. Initialise**
 
-Fill in the bucket name in `env/dev.backend.hcl`, then:
-
 ```sh
-export AWS_PROFILE=aithos-registry-dev
+export AWS_PROFILE=registry-dev
 terraform init -backend-config=env/dev.backend.hcl
 ```
 
@@ -64,8 +88,12 @@ terraform output nameservers
 
 **3. Delegate, by hand, in the account holding `aithos.world`**
 
-Create an `NS` record for `registry-dev.aithos.world` in the parent zone,
-pointing at the four nameservers from step 2. Wait for it to resolve:
+The parent zone is `Z09988302Y6VWTN77SVQ8` in account `128066560720`
+(`aithos-prod`). It holds 11 records and none of them mention `registry`, so
+both hostnames are free.
+
+Create an `NS` record for `registry-dev.aithos.world` there, pointing at the
+four nameservers from step 2. Wait for it to resolve:
 
 ```sh
 dig +short NS registry-dev.aithos.world
