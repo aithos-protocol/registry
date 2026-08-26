@@ -1,6 +1,5 @@
 target/
 .DS_Store
-*.lock.*
 
 # Never commit credentials or local configuration.
 .env
@@ -11,4 +10,3 @@ target/
 .terraform/
 *.tfstate
 *.tfstate.*
-.terraform.lock.hcl

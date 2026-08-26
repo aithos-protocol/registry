@@ -41,13 +41,18 @@ pub fn card_object_key(agent_id: &str, digest: &str) -> String {
 }
 
 /// S3 key of the current-card pointer, overwritten on every publication.
+///
+/// Deliberately identical to the request path it answers, minus the leading
+/// slash. CloudFront asks S3 for exactly that key, so the hot read path needs
+/// no URL rewrite — no CloudFront Function, no Lambda@Edge, nothing to keep in
+/// sync with the router.
 pub fn current_card_key(agent_id: &str) -> String {
-    format!("current/{agent_id}/agent-card.json")
+    format!("v1/agents/{agent_id}/agent-card.json")
 }
 
-/// S3 key of the current JWKS.
+/// S3 key of the current JWKS. Same reasoning as [`current_card_key`].
 pub fn current_jwks_key(agent_id: &str) -> String {
-    format!("current/{agent_id}/jwks.json")
+    format!("v1/agents/{agent_id}/jwks.json")
 }
 
 #[cfg(test)]
@@ -70,6 +75,15 @@ mod tests {
         // Tolerate a bare hex digest, so a caller cannot produce two object
         // keys for one artifact.
         assert_eq!(card_object_key("abc", "dead"), "versions/abc/dead.json");
+    }
+
+    /// The hot read path is served straight from S3 by CloudFront, so the
+    /// object key has to be the request path verbatim.
+    #[test]
+    fn current_object_keys_mirror_their_request_paths() {
+        let request_path = "/v1/agents/abc/agent-card.json";
+        assert_eq!(current_card_key("abc"), request_path.trim_start_matches('/'));
+        assert_eq!(current_jwks_key("abc"), "v1/agents/abc/jwks.json");
     }
 
     #[test]
