@@ -32,27 +32,32 @@ Idle cost should be near zero.
 
 ### 1. Account structure
 
-Create **two accounts** in the existing Aithos AWS Organization, under a new
-organizational unit named `registry`:
+Create **one account** for now, in the existing Aithos AWS Organization, under
+a new organizational unit named `registry`:
 
 | Account | Purpose |
 | --- | --- |
-| `aithos-registry-dev` | development and staging |
-| `aithos-registry-prod` | production |
+| `aithos-registry-dev` | development, and the first deployments |
 
-Each account needs its own unique root email address. A plus-alias on an
-existing mailbox is fine (`aws+registry-dev@…`, `aws+registry-prod@…`) provided
-the mailbox is monitored and not tied to one individual.
+**Create the development account first, not production.** The first
+`terraform apply` of a new stack is a learning exercise: it leaves orphaned
+resources, things corrected by hand, and a state file carrying the history of
+those corrections. That history should not belong to the account that will
+hold real data. Production comes later, created cleanly from Terraform that has
+already been proven.
 
-Two accounts rather than one is the point: the registry's promise is that
-published entries are immutable, so there must be no way to test against
-production. If the Organization does not exist yet, or two accounts are not
-wanted, fall back to a single account with two fully separate Terraform state
-prefixes — **and say so explicitly in the report**, because the Terraform will
-be written differently.
+A second account, `aithos-registry-prod`, will be added before the registry
+accepts its first card from anyone outside the team. That is the line that
+matters: after it, published entries are immutable and every change to the
+stack carries real risk. Adding the account then is one `terraform apply`,
+provided the Terraform was written for more than one environment from the
+start — which it will be.
 
-For each account: enable MFA on the root user, and confirm the root user has
-no access keys.
+The account needs its own root email address. A plus-alias on an existing
+mailbox is fine (`aws+registry-dev@…`) provided the mailbox is monitored and
+not tied to one individual.
+
+Enable MFA on the root user, and confirm the root user has no access keys.
 
 ### 2. Region
 
@@ -69,7 +74,7 @@ Terraform asks for a provider aliased to `us-east-1`.
 Use **IAM Identity Center** (AWS SSO). Do **not** create IAM users.
 
 Create a permission set named `RegistryTerraform`, assigned to the operator's
-principal on both accounts, granting only:
+principal, granting only:
 
 ```
 s3, dynamodb, lambda, apigateway, cloudfront, acm,
@@ -82,15 +87,14 @@ and friends **only for roles under the path `/registry/`**, and attach a
 permissions boundary so a role created by Terraform can never grant itself more
 than the stack needs. This is cheap now and unpleasant to retrofit.
 
-Then configure local named profiles with `aws configure sso`:
+Then configure a local named profile with `aws configure sso`:
 
 - `aithos-registry-dev`
-- `aithos-registry-prod`
 
 ### 4. Terraform state backend
 
 This has to exist before Terraform can run, so create it by hand (or with a
-throwaway local-state bootstrap) **in each account**:
+throwaway local-state bootstrap):
 
 An S3 bucket named `aithos-registry-tfstate-<env>-<account-id>` — the account
 ID suffix is there because S3 bucket names are globally unique — with:
@@ -107,11 +111,18 @@ for removal. The bucket policy must therefore allow `s3:DeleteObject` on
 
 ### 5. Guardrails
 
-- An **AWS Budgets** alarm per account with an email notification — roughly €20
-  for dev, €50 for prod. The stack should cost close to nothing, so any alarm
-  is a signal that something is wrong, not that traffic grew.
+Two of these are not optional even for a single account:
+
+- **Versioning on the state bucket**, above. It is the only recovery path if a
+  state file is corrupted or a wrong apply destroys something.
+- An **AWS Budgets** alarm with an email notification — roughly €20. The stack
+  should cost close to nothing, so any alarm is a signal that something is
+  wrong, not that traffic grew.
+
+Nice to have, and easy to add later:
+
 - **CloudTrail** enabled, or confirmation that an organization trail already
-  covers these accounts.
+  covers this account.
 
 ### 6. DNS
 
@@ -125,8 +136,8 @@ Hostnames:
 
 | Environment | Hostname |
 | --- | --- |
-| prod | `registry.aithos.world` |
-| dev | `registry-dev.aithos.world` |
+| dev (now) | `registry-dev.aithos.world` |
+| prod (later) | `registry.aithos.world` |
 
 Find out and report **which AWS account holds the `aithos.world` hosted zone**,
 and its zone ID. That account is where the delegation records will have to be
@@ -137,8 +148,9 @@ records will have to be created by hand once.
 Do not create any hosted zone or record yet. Just report:
 
 - the account ID and zone ID of the existing `aithos.world` hosted zone;
-- whether `registry.aithos.world` and `registry-dev.aithos.world` are free of
-  existing records;
+- whether `registry-dev.aithos.world` and `registry.aithos.world` are free of
+  existing records — both, so that the production name is known to be
+  available before anything depends on it;
 - whether a cross-account role for Route 53 in that account is acceptable, or
   whether the two `NS` delegation records should be created manually instead.
 
@@ -147,8 +159,9 @@ that runs it, so that each environment owns its DNS and nothing is shared:
 
 ```text
 aithos.world zone (existing account)
-  ├── registry.aithos.world       NS → hosted zone in aithos-registry-prod
-  └── registry-dev.aithos.world   NS → hosted zone in aithos-registry-dev
+  ├── registry-dev.aithos.world   NS → hosted zone in aithos-registry-dev
+  └── registry.aithos.world       NS → hosted zone in aithos-registry-prod
+                                       (later, same shape)
 ```
 
 Delegating rather than writing records directly into the parent zone matters
@@ -174,14 +187,13 @@ not edited by hand in a zone that belongs to something else.
 
 Plain values, no secrets:
 
-1. The two account IDs, and the OU they sit in.
+1. The account ID, and the OU it sits in.
 2. The confirmed primary region.
 3. The Identity Center start URL and the permission set name.
-4. The two local profile names, and confirmation that
-   `aws sts get-caller-identity --profile <name>` succeeds for each.
-5. The state bucket name in each account, with versioning and encryption
-   confirmed.
+4. The local profile name, and confirmation that
+   `aws sts get-caller-identity --profile <name>` succeeds.
+5. The state bucket name, with versioning and encryption confirmed.
 6. The DNS answers from section 6: the account and zone ID holding
    `aithos.world`, and how the delegation should be created.
-7. Whether the budget alarms and CloudTrail are in place.
+7. Whether the budget alarm and CloudTrail are in place.
 8. Anything that had to be done differently from the above, and why.
