@@ -28,6 +28,7 @@ crates/registry-core/    RFC 7638 thumbprints, JWS verification, and the
 crates/registry-api/     HTTP surface, storage contract, in-memory store
 crates/registry-lambda/  DynamoDB and S3 backend, Lambda entry point
 crates/registry-e2e/     tests against a deployed environment
+crates/aithos-cli/       the `aithos` command line: publish and verify
 vectors/                 published conformance vectors
   rfc8785/               the official RFC 8785 test vectors
   a2a-sample-agent-card.json   the sample card from A2A §8.5
@@ -84,7 +85,7 @@ moves.
 ## Development
 
 ```sh
-cargo test           # 83 tests, none of which touch a network
+cargo test           # 100 tests, none of which touch a network
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p a2a-card --target wasm32-unknown-unknown
@@ -112,6 +113,40 @@ agent's state, so committing them has to be conditional on that snapshot still
 being current. DynamoDB's conditional writes express exactly that, which is why
 the `Store` contract in `registry-api` is written around a `Conflict` error
 rather than around locks.
+
+## The command line
+
+```sh
+cargo install --path crates/aithos-cli     # installs `aithos`
+
+aithos key new                             # its thumbprint is your entry's address
+aithos card init                           # a card that already passes the strict profile
+aithos publish agent-card.json --key <kid> --bump patch
+aithos verify <agent-id>
+```
+
+`verify` is the reason the rest exists. Publishing is rare — a few people, a few
+times a year. Verifying is what every consumer of an agent does, and until now
+it meant reimplementing RFC 8785 canonicalization, A2A's field-presence rules
+and detached JWS. It works on any signed A2A card, not only cards from this
+registry: a verifier that only trusts its own issuer is not a verifier.
+
+It also reports what it did **not** establish — no domain, no organisation, and
+nothing about whether the key holder operates the endpoints the card declares.
+Output that lets a reader believe otherwise would be a phishing tool with a tick
+next to it.
+
+There is no `rotate` command. Rotation is the choice of which keys sign:
+`--key` repeats. Co-sign one version with the old key and the new one to widen
+the authorized set, then sign with the survivors alone to narrow it. The tool
+exposes the protocol rather than inventing a second mechanism on top of it.
+
+Keys live in `~/.config/aithos/keys`, mode `0600`, encrypted at rest as a JWE
+(`PBES2-HS256+A128KW` with `A256GCM`) unless `--no-passphrase` says otherwise.
+No daemon, no agent — the model is the one already in everyone's fingers.
+
+`--offline` signs and writes without contacting anything, so the machine holding
+the key never needs to reach the network.
 
 ## Testing against a deployed environment
 

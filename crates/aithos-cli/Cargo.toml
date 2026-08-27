@@ -1,0 +1,32 @@
+[package]
+name = "aithos-cli"
+description = "Publish and verify signed A2A Agent Cards from the command line."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "aithos"
+path = "src/main.rs"
+
+# Deliberately depends only on the deterministic core. Pulling in the server
+# side would drag the AWS SDK into every `cargo install`, for nothing.
+[dependencies]
+a2a-card = { path = "../a2a-card" }
+registry-core = { path = "../registry-core" }
+clap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64ct = { workspace = true }
+sha2 = { workspace = true }
+semver = { workspace = true }
+thiserror = { workspace = true }
+p256 = { version = "0.13", features = ["ecdsa"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+reqwest = { workspace = true, default-features = false, features = ["blocking", "rustls-tls"] }
+pbkdf2 = { workspace = true }
+aes-kw = { workspace = true }
+aes-gcm = { workspace = true }
+zeroize = { workspace = true }
+rpassword = { workspace = true }

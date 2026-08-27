@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e"]
+members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e", "crates/aithos-cli"]
 
 [workspace.package]
 version = "0.1.0"
@@ -26,4 +26,11 @@ lambda_http = "1"
 lambda_runtime = "1"
 tracing = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4", features = ["derive", "wrap_help", "env"] }
+semver = "1"
+pbkdf2 = "0.12"
+aes-kw = "0.2"
+aes-gcm = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+rpassword = "7"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
