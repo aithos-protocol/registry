@@ -1,10 +1,22 @@
 [package]
-name = "a2a-card"
+name = "aithos-a2a-card"
 description = "Strict A2A Agent Card parsing, field-presence validation and RFC 8785 canonicalization."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository = "https://github.com/aithos-protocol/registry"
+homepage = "https://github.com/aithos-protocol/registry"
+readme = "README.md"
+keywords = ["a2a", "agent", "canonicalization", "jcs", "rfc8785"]
+categories = ["encoding", "parser-implementations"]
+
+# The package carries the namespace; the library target does not. Everything
+# that imports this crate — including its own integration tests — says
+# `a2a_card`, and renaming the package on crates.io has no business
+# changing that.
+[lib]
+name = "a2a_card"
 
 [dependencies]
 serde = { workspace = true }

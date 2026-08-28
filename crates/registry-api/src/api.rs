@@ -489,7 +489,7 @@ async fn manifest(State(state): State<AppState>) -> Response {
         // link that 404s, which is worse than none — so the manifest names where
         // they actually are.
         "testVectors": {
-            "repository": "https://github.com/aithos/agent-card-registry",
+            "repository": "https://github.com/aithos-protocol/registry",
             "path": "vectors/",
         },
         "limits": {

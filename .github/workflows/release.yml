@@ -1,0 +1,130 @@
+# Cutting a release.
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Every binary is built on a runner whose architecture matches its target, so
+# nothing here cross-compiles: a cross toolchain is one more thing between the
+# source and the artifact, and this artifact's whole job is to be trustworthy.
+#
+# Only first-party actions are used. A release pipeline for a tool that holds
+# private keys is a supply chain, and every third-party action in it is another
+# party who can change what ships without changing this file.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write      # to sign the provenance attestation
+      attestations: write  # to record it against this repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14,        target: aarch64-apple-darwin }
+          - { runner: macos-13,        target: x86_64-apple-darwin }
+          # musl, so the Linux builds carry no glibc version floor and run on
+          # anything from a distroless container to a decade-old server.
+          - { runner: ubuntu-24.04,    target: x86_64-unknown-linux-musl }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { runner: windows-2022,    target: x86_64-pc-windows-msvc }
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the pinned toolchain
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal --no-self-update stable
+          rustup target add ${{ matrix.target }}
+
+      - name: musl linker
+        if: endsWith(matrix.target, '-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked -p aithos --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          stem="aithos-${version}-${{ matrix.target }}"
+          mkdir -p "dist/${stem}"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/aithos.exe" "dist/${stem}/"
+          else
+            cp "target/${{ matrix.target }}/release/aithos" "dist/${stem}/"
+            strip "dist/${stem}/aithos" || true
+          fi
+          cp README.md LICENSE "dist/${stem}/"
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "${stem}.zip" "${stem}" > /dev/null
+            asset="${stem}.zip"
+          else
+            tar czf "${stem}.tar.gz" "${stem}"
+            asset="${stem}.tar.gz"
+          fi
+          # Checksums a human can compare by eye against the release page.
+          if command -v sha256sum > /dev/null; then
+            sha256sum "${asset}" > "${asset}.sha256"
+          else
+            shasum -a 256 "${asset}" > "${asset}.sha256"
+          fi
+          echo "asset=dist/${asset}" >> "$GITHUB_OUTPUT"
+          echo "sum=dist/${asset}.sha256" >> "$GITHUB_OUTPUT"
+
+      # What makes the download checkable. `gh attestation verify` proves this
+      # artifact was produced by this workflow, from this commit, and not by
+      # someone who merely had write access to the release page.
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: ${{ steps.package.outputs.asset }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            ${{ steps.package.outputs.asset }}
+            ${{ steps.package.outputs.sum }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat dist/*.sha256 > dist/SHA256SUMS
+          rm -f dist/*.sha256
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            --notes-file - <<'NOTES'
+          Every artifact carries a build provenance attestation. Before trusting
+          a download, check that it came from this repository and this commit:
+
+              gh attestation verify <file> --repo ${{ github.repository }}
+
+          That is worth doing for any binary; for one that will hold your
+          private keys it is the point.
+          NOTES

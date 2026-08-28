@@ -3,7 +3,9 @@ resolver = "3"
 members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e", "crates/aithos-cli"]
 
 [workspace.package]
-version = "0.1.0"
+# Alpha, and honestly so: the write protocol changed in a breaking way
+# this morning, and the registry runs in one development environment.
+version = "0.1.0-alpha.1"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.90"

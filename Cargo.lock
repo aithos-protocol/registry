@@ -3,19 +3,6 @@
 version = 4
 
 [[package]]
-name = "a2a-card"
-version = "0.1.0"
-dependencies = [
- "base64ct",
- "serde",
- "serde_jcs",
- "serde_json",
- "serde_json_canonicalizer",
- "sha2",
- "thiserror",
-]
-
-[[package]]
 name = "aead"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -69,18 +56,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "aithos-cli"
-version = "0.1.0"
+name = "aithos"
+version = "0.1.0-alpha.1"
 dependencies = [
- "a2a-card",
  "aes-gcm",
  "aes-kw",
+ "aithos-a2a-card",
+ "aithos-registry-core",
  "base64ct",
  "clap",
  "p256",
  "pbkdf2",
  "rand_core 0.6.4",
- "registry-core",
  "reqwest",
  "rpassword",
  "semver",
@@ -90,6 +77,37 @@ dependencies = [
  "thiserror",
  "time",
  "zeroize",
+]
+
+[[package]]
+name = "aithos-a2a-card"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "base64ct",
+ "serde",
+ "serde_jcs",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "aithos-registry-core"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "aithos-a2a-card",
+ "base64ct",
+ "ed25519-dalek",
+ "p256",
+ "rand_core 0.6.4",
+ "rsa",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
 ]
 
 [[package]]
@@ -2288,16 +2306,16 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "registry-api"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
- "a2a-card",
+ "aithos-a2a-card",
+ "aithos-registry-core",
  "async-trait",
  "axum",
  "base64ct",
  "http-body-util",
  "p256",
  "rand_core 0.6.4",
- "registry-core",
  "semver",
  "serde",
  "serde_json",
@@ -2309,32 +2327,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "registry-core"
-version = "0.1.0"
-dependencies = [
- "a2a-card",
- "base64ct",
- "ed25519-dalek",
- "p256",
- "rand_core 0.6.4",
- "rsa",
- "semver",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
- "time",
-]
-
-[[package]]
 name = "registry-e2e"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
- "a2a-card",
+ "aithos-a2a-card",
+ "aithos-registry-core",
  "base64ct",
  "p256",
  "rand_core 0.6.4",
- "registry-core",
  "reqwest",
  "serde_json",
  "tokio",
@@ -2342,8 +2342,9 @@ dependencies = [
 
 [[package]]
 name = "registry-lambda"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
+ "aithos-registry-core",
  "async-trait",
  "aws-config",
  "aws-sdk-dynamodb",
@@ -2353,7 +2354,6 @@ dependencies = [
  "lambda_http",
  "lambda_runtime",
  "registry-api",
- "registry-core",
  "serde",
  "serde_json",
  "sha2",

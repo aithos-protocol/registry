@@ -1,14 +1,26 @@
 [package]
-name = "registry-core"
+name = "aithos-registry-core"
 description = "Key identity, JWS verification and the write-authorization rules of the Agent Card Registry."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository = "https://github.com/aithos-protocol/registry"
+homepage = "https://github.com/aithos-protocol/registry"
+readme = "README.md"
+keywords = ["a2a", "agent", "jws", "signature", "registry"]
+categories = ["cryptography", "authentication"]
+
+# The package carries the namespace; the library target does not. Everything
+# that imports this crate — including its own integration tests — says
+# `registry_core`, and renaming the package on crates.io has no business
+# changing that.
+[lib]
+name = "registry_core"
 
 [dependencies]
 time = { workspace = true }
-a2a-card = { path = "../a2a-card" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0-alpha.1" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

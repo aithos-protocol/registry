@@ -117,7 +117,10 @@ rather than around locks.
 ## The command line
 
 ```sh
-cargo install --path crates/aithos-cli     # installs `aithos`
+cargo install aithos                       # from crates.io
+# or, prebuilt and with a provenance attestation:
+#   gh release download --repo aithos-protocol/registry --pattern '*apple-darwin*'
+#   gh attestation verify aithos-*.tar.gz --repo aithos-protocol/registry
 
 aithos key new                             # its thumbprint is your entry's address
 aithos card init                           # a card that already passes the strict profile

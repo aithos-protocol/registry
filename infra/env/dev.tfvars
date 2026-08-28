@@ -11,5 +11,11 @@ parent_zone_name = "aithos.world"
 # answered deliberately rather than worked around.
 region = "us-east-1"
 
-# Alarms with no subscriber are alarms nobody reads.
-alarm_email = "mathieu.colla.pro@gmail.com"
+# Alarms with no subscriber are alarms nobody reads — so set this, but not
+# here: a committed address means anyone who forks this repository and applies
+# it sends their alarms to whoever wrote the file. Pass it at apply time:
+#
+#   terraform apply -var-file=env/dev.tfvars -var alarm_email=you@example.com
+#
+# Left null, the stack still builds and the SNS topic simply has no subscriber.
+# alarm_email = "you@example.com"

@@ -1,10 +1,19 @@
 [package]
-name = "aithos-cli"
+name = "aithos"
 description = "Publish and verify signed A2A Agent Cards from the command line."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository = "https://github.com/aithos-protocol/registry"
+homepage = "https://github.com/aithos-protocol/registry"
+documentation = "https://github.com/aithos-protocol/registry#the-command-line"
+readme = "README.md"
+keywords = ["a2a", "agent", "signature", "jws", "registry"]
+categories = ["command-line-utilities", "cryptography"]
+# The published package is the client alone. Everything under `crates/` that
+# the server needs is a path dependency and stays out of it.
+include = ["src/**/*.rs", "Cargo.toml", "README.md"]
 
 [[bin]]
 name = "aithos"
@@ -14,8 +23,8 @@ path = "src/main.rs"
 # side would drag the AWS SDK into every `cargo install`, for nothing.
 [dependencies]
 time = { workspace = true }
-a2a-card = { path = "../a2a-card" }
-registry-core = { path = "../registry-core" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0-alpha.1" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0-alpha.1" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
