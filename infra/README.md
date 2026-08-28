@@ -17,11 +17,19 @@ before any of this.
 | **Lambda** | The write path. Rust on `provided.al2023`, arm64. |
 | **HTTP API** | One catch-all route; the router lives in the binary. |
 | **CloudFront** | Two origins: S3 for the hot reads, the API for everything else. |
+| **Reconciler** | Converges the read path from the register, on every change. |
+| **Sweeper** | The same convergence, hourly, over every agent. |
+| **WAF** | Per-address and per-agent rate limits, at the only entrance. |
 | **Route 53 + ACM** | This environment's own delegated zone and its certificate. |
 
-The runtime role grants no `DeleteItem` and no `DeleteObject`. The registry is
-append-only, so the runtime never needs to remove anything, and withholding the
-permission is a stronger guarantee than not calling the API.
+No role anywhere grants `DeleteItem`, and no role can delete an object under
+`versions/` — the published cards. The register is append-only, so nothing ever
+needs to remove either, and withholding the permission is a stronger guarantee
+than not calling the API.
+
+The reconciler and sweeper do hold `s3:DeleteObject`, scoped to `v1/*`: those
+are the current-version pointers, and deleting them is exactly how a withdrawal
+is honoured (`SPEC.md` §6.5). The API role holds no write of any kind there.
 
 ## Regions
 

@@ -70,7 +70,14 @@ pub struct Commit {
     /// The public JWKs now authorized, in submission order.
     pub keys: Vec<serde_json::Value>,
     pub authorized_kids: BTreeSet<String>,
+    /// The timestamp of *this* write.
     pub created_at: String,
+    /// The entry's original `createdAt`, when it already exists.
+    ///
+    /// A store that replaces the whole item on update — DynamoDB's `Put` does —
+    /// has no other way to keep it, and an entry that reports its last update
+    /// as its creation time has quietly lost the fact it was meant to record.
+    pub existing_created_at: Option<String>,
 }
 
 /// One page of a listing.

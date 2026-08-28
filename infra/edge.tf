@@ -13,6 +13,15 @@ locals {
   api_origin = "api"
 }
 
+# Rotating this forces a new value on the next apply, which is the intended way
+# to cut off anyone who learned the old one. `keepers` is deliberately empty:
+# the value must survive ordinary applies, or every deploy would briefly reject
+# in-flight edge requests.
+resource "random_password" "edge_secret" {
+  length  = 48
+  special = false
+}
+
 resource "aws_cloudfront_origin_access_control" "s3" {
   name                              = local.name
   origin_access_control_origin_type = "s3"
@@ -34,6 +43,45 @@ data "aws_cloudfront_cache_policy" "disabled" {
 # Forwards everything except Host, which must stay the origin's own.
 data "aws_cloudfront_origin_request_policy" "all_viewer_except_host" {
   name = "Managed-AllViewerExceptHostHeader"
+}
+
+# The record, listing and manifest reads were falling to the default behaviour,
+# which is `CachingDisabled` — so the `Cache-Control: public, max-age=60` the
+# API sets on them was discarded and every anonymous GET became a Lambda
+# invocation and a DynamoDB query. That made "reads are served from the edge,
+# they cost almost nothing" — the premise the whole rate-limiting design rests
+# on — false for four of the seven public endpoints.
+#
+# Keyed on the two query parameters the listings actually use, and on nothing
+# else: an unkeyed parameter would let one caller poison another's answer, and a
+# fully-keyed policy would make the cache useless against a caller varying junk
+# parameters.
+resource "aws_cloudfront_cache_policy" "records" {
+  name        = "${local.name}-records"
+  default_ttl = 60
+  min_ttl     = 0
+  max_ttl     = 300
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
+
+    cookies_config {
+      cookie_behavior = "none"
+    }
+
+    headers_config {
+      header_behavior = "none"
+    }
+
+    query_strings_config {
+      query_string_behavior = "whitelist"
+
+      query_strings {
+        items = ["limit", "cursor"]
+      }
+    }
+  }
 }
 
 resource "aws_cloudfront_distribution" "registry" {
@@ -59,6 +107,19 @@ resource "aws_cloudfront_distribution" "registry" {
       https_port             = 443
       origin_protocol_policy = "https-only"
       origin_ssl_protocols   = ["TLSv1.2"]
+    }
+
+    # The WAF rate rule that tells an abusive publisher from a legitimate one
+    # lives at the edge, and WAFv2 cannot be attached to an HTTP API at all — so
+    # without this the API's own `execute-api` hostname is a second front door
+    # with no such rule behind it. This header is what the origin checks to know
+    # a request came through the distribution. It is not an authorization
+    # secret: everything that authorizes a write is a signature. It is the
+    # difference between one rate-limited entrance and two, one of which nobody
+    # is watching.
+    custom_header {
+      name  = "x-aithos-edge"
+      value = random_password.edge_secret.result
     }
   }
 
@@ -92,9 +153,29 @@ resource "aws_cloudfront_distribution" "registry" {
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
 
-    cache_policy_id          = data.aws_cloudfront_cache_policy.optimized.id
-    origin_request_policy_id = data.aws_cloudfront_origin_request_policy.all_viewer_except_host.id
-    compress                 = true
+    # No origin request policy, deliberately. `CachingOptimized` keys on the
+    # path alone, and this origin *does* vary on `If-None-Match` — it answers a
+    # matching validator with a bodiless 304. Forwarding the viewer's
+    # conditional header to an origin whose response is not part of the cache
+    # key is how one conditional request poisons a permanently cached URL with
+    # an empty response. These objects are immutable, so a client holding one
+    # has no reason to revalidate, and CloudFront handles revalidation against
+    # its own cache without the origin's help.
+    cache_policy_id = data.aws_cloudfront_cache_policy.optimized.id
+    compress        = true
+  }
+
+  # `/v1/agents/{id}/versions` — a GET-only projection. Declared before the
+  # greedy card pattern for the same reason `/versions/*` is: wildcards match
+  # across slashes.
+  ordered_cache_behavior {
+    path_pattern           = "/v1/agents/*/versions"
+    target_origin_id       = local.api_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = aws_cloudfront_cache_policy.records.id
+    compress               = true
   }
 
   # The hot path: every agent's current card, straight from the object store.
@@ -110,6 +191,47 @@ resource "aws_cloudfront_distribution" "registry" {
 
   ordered_cache_behavior {
     path_pattern           = "/v1/agents/*/jwks.json"
+    target_origin_id       = local.s3_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.optimized.id
+    compress               = true
+  }
+
+  # Reads that follow state, and so cannot be `immutable` — but that also do
+  # not need to be fresh to the second. Sixty seconds bounds how long a
+  # withdrawal can be invisible here, which matches what the API already asks
+  # for in its own `Cache-Control`.
+  ordered_cache_behavior {
+    path_pattern           = "/v1/agents"
+    target_origin_id       = local.api_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = aws_cloudfront_cache_policy.records.id
+    compress               = true
+  }
+
+  ordered_cache_behavior {
+    path_pattern           = "/v1/registry"
+    target_origin_id       = local.api_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = aws_cloudfront_cache_policy.records.id
+    compress               = true
+  }
+
+  # The custom error page below is fetched through this same behaviour table —
+  # it is an ordinary request, not a special case — so without this behaviour it
+  # would fall to the default one and be requested from the API, which has no
+  # such route. The error object would never be served, and every 404 on a
+  # missing card would cost a Lambda invocation on an uncached path: an
+  # anonymous, unthrottled read turned into compute. It cannot collide with the
+  # patterns above; no agent path contains `/errors/`.
+  ordered_cache_behavior {
+    path_pattern           = "/errors/*"
     target_origin_id       = local.s3_origin
     viewer_protocol_policy = "redirect-to-https"
     allowed_methods        = ["GET", "HEAD"]

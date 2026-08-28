@@ -22,6 +22,7 @@ use serde_json::json;
 
 use crate::item::{self, Item};
 use crate::keys;
+use crate::reconciler::{CommittedState, SweepState};
 
 pub struct AwsStore {
     ddb: aws_sdk_dynamodb::Client,
@@ -111,6 +112,18 @@ impl Store for AwsStore {
         )
         .await?;
 
+        // `Put` inside a transaction replaces the whole item, so whatever
+        // `createdAt` goes in here is what the entry will have from now on.
+        // `commit.created_at` is *this* write's timestamp — correct for a
+        // creation and wrong for every update, which is how an entry's real
+        // creation time was being overwritten each time it was republished.
+        // The caller already read the current record to authorize this write,
+        // and passes its `createdAt` back for exactly this reason.
+        let created_at = commit
+            .existing_created_at
+            .clone()
+            .unwrap_or_else(|| commit.created_at.clone());
+
         let record = AgentRecord {
             agent_id: commit.agent_id.clone(),
             status: Status::Active,
@@ -118,7 +131,7 @@ impl Store for AwsStore {
             card_digest: commit.card_digest.clone(),
             card_version: commit.card_version.clone(),
             authorized_kids: commit.authorized_kids.clone(),
-            created_at: commit.created_at.clone(),
+            created_at,
             updated_at: commit.created_at.clone(),
         };
         let version = VersionRecord {
@@ -160,6 +173,13 @@ impl Store for AwsStore {
 
         self.ddb
             .transact_write_items()
+            // Without this, a transaction whose response was lost is retried by
+            // the SDK, the retry trips `attribute_not_exists(sk)` on the version
+            // item, and a write that in fact succeeded is reported as a 409 —
+            // exactly the case §6.1 says must not be answered with a conflict.
+            // The token is derived from what the write *is*, so a genuine retry
+            // of the same write reuses it and a different write cannot.
+            .client_request_token(request_token(commit))
             .transact_items(
                 TransactWriteItem::builder()
                     .put(agent_put.build().map_err(backend)?)
@@ -179,12 +199,7 @@ impl Store for AwsStore {
             .await
             .map_err(transaction_error)?;
 
-        // `createdAt` is only correct here for a creation; re-read so that an
-        // update reports the original creation time rather than this write's.
-        match self.get_agent(&commit.agent_id).await? {
-            Some(stored) => Ok(stored),
-            None => Ok(record),
-        }
+        Ok(record)
     }
 
     async fn withdraw(
@@ -268,9 +283,38 @@ impl Store for AwsStore {
 
         if let Some(cursor) = cursor {
             let seq: u64 = cursor.parse().map_err(|_| StoreError::BadCursor)?;
+            let sk = keys::version_sk(seq);
+            // A cursor naming a version that does not exist is not one this
+            // registry issued. DynamoDB accepts any key inside the partition as
+            // a starting point, so without this a forged number silently
+            // returned a page from an arbitrary position — and `CURSOR_INVALID`
+            // was unreachable here while the in-memory store raised it for the
+            // same input. Two backends behind one contract have to agree.
+            let exists = self
+                .ddb
+                .get_item()
+                .table_name(&self.table)
+                .key("pk", Av::S(keys::agent_pk(agent_id)))
+                .key("sk", Av::S(sk.clone()))
+                .projection_expression("sk")
+                // Consistent, like every other read that decides something.
+                // Without it a cursor the registry issued for a version
+                // committed moments earlier can come back `CURSOR_INVALID` —
+                // the store reporting a client error for input it produced
+                // itself.
+                .consistent_read(true)
+                .send()
+                .await
+                .map_err(backend)?
+                .item
+                .is_some();
+            if !exists {
+                return Err(StoreError::BadCursor);
+            }
+
             query = query.set_exclusive_start_key(Some(Item::from([
                 ("pk".to_string(), Av::S(keys::agent_pk(agent_id))),
-                ("sk".to_string(), Av::S(keys::version_sk(seq))),
+                ("sk".to_string(), Av::S(sk)),
             ])));
         }
 
@@ -303,6 +347,13 @@ impl Store for AwsStore {
             .table_name(&self.table)
             .key("pk", Av::S(keys::agent_pk(agent_id)))
             .key("sk", Av::S(keys::digest_sk(digest)))
+            // Consistent, like the record read. `get_version_card` gates the
+            // bytes on this item, so an eventually-consistent read meant a
+            // `GET .../versions/{digest}/agent-card.json` immediately after the
+            // `201` that created it could answer 404 — for a version the same
+            // response had just named. The path is cached `immutable` at the
+            // edge, so a client that hit that 404 would keep it.
+            .consistent_read(true)
             .send()
             .await
             .map_err(backend)?;
@@ -344,6 +395,135 @@ impl Store for AwsStore {
     }
 }
 
+impl AwsStore {
+    /// Every agent's identifier, for the reconciliation sweep.
+    ///
+    /// Identifiers only. The state each one is in is read separately, and
+    /// consistently, at the moment it is acted on — a listing is an
+    /// eventually-consistent index read that can be minutes stale by the time
+    /// the far end of it comes up, and acting on stale state would let the
+    /// sweep rewrite a pointer the stream had already moved forward.
+    ///
+    /// Deliberately not part of the `Store` trait: nothing on the request path
+    /// may enumerate the whole register, and a method that exists only here is
+    /// a method a handler cannot reach by accident.
+    pub async fn sweep_agent_ids(&self) -> StoreResult<Vec<String>> {
+        let mut ids = Vec::new();
+        let mut start: Option<Item> = None;
+
+        loop {
+            let mut query = self
+                .ddb
+                .query()
+                .table_name(&self.table)
+                .index_name("gsi1")
+                .key_condition_expression("gsi1pk = :pk")
+                .expression_attribute_values(":pk", Av::S(keys::LIST_PK.into()))
+                .projection_expression("agentId")
+                // Newest first. The agents most likely to have drifted are the
+                // ones that changed most recently — a dropped stream record is
+                // a record about a recent change — and they are also the ones a
+                // sweep that runs out of time would otherwise reach last.
+                .scan_index_forward(false)
+                .limit(500);
+            if let Some(key) = start {
+                query = query.set_exclusive_start_key(Some(key));
+            }
+
+            let out = query.send().await.map_err(backend)?;
+            for raw in out.items.unwrap_or_default() {
+                // Dropping an unreadable row silently would let the sweep cover
+                // nothing and report convergence: `agents = 0, "read path
+                // matches the register"`, with `sweeper-errors` seeing no fault,
+                // `sweeper-stopped` seeing an invocation and `sweep-repairs`
+                // seeing the healthy value. This is the one component whose job
+                // is to notice silence; its own silence must not look like
+                // success.
+                let id = raw
+                    .get("agentId")
+                    .and_then(|v| v.as_s().ok())
+                    .ok_or_else(|| {
+                        StoreError::Backend(
+                            "a row in the listing index has no readable agentId".to_string(),
+                        )
+                    })?;
+                ids.push(id.clone());
+            }
+
+            match out.last_evaluated_key {
+                Some(key) => start = Some(key),
+                None => break,
+            }
+        }
+        Ok(ids)
+    }
+}
+
+impl CommittedState for AwsStore {
+    async fn state_of(&self, agent_id: &str) -> Result<SweepState, String> {
+        let raw = self
+            .get_agent_item(agent_id)
+            .await
+            .map_err(|e| format!("reading the record for {agent_id}: {e}"))?
+            .ok_or_else(|| {
+                // Agent items are never deleted, so an identifier that was
+                // listed and is now absent means something outside this system
+                // touched the table. Failing is right: repairing the read path
+                // from a record that does not exist is guesswork.
+                format!("agent {agent_id} was listed but has no record")
+            })?;
+
+        let record = item::agent_record(&raw).map_err(|e| e.to_string())?;
+        match record.status {
+            Status::Withdrawn => Ok(SweepState::Withdrawn),
+            Status::Active => {
+                // The stored key set is what the reconciler publishes. If it
+                // cannot be read, the pointer must not be rewritten from a
+                // guess — the same rule the stream path applies.
+                let raw_keys = raw
+                    .get("keys")
+                    .and_then(|v| v.as_s().ok())
+                    .ok_or_else(|| format!("agent {agent_id} has no readable key set"))?;
+                let keys: serde_json::Value =
+                    serde_json::from_str(raw_keys).map_err(|e| e.to_string())?;
+                Ok(SweepState::Active {
+                    seq: record.seq,
+                    card_digest: record.card_digest,
+                    keys,
+                })
+            }
+        }
+    }
+}
+
+/// A DynamoDB idempotency token for one commit.
+///
+/// At most 36 characters, identical across retries of the same request and
+/// different for any other. Derived from everything that varies between two
+/// commits, `createdAt` included: DynamoDB refuses a token replayed with
+/// different parameters, and the timestamp is one of the item's attributes. An
+/// SDK-level retry resends identical bytes, so it reuses both — which is the
+/// case this exists for. Without it, a transaction whose response was lost is
+/// retried, the retry trips `attribute_not_exists(sk)` on the version item, and
+/// a write that in fact succeeded is reported as a 409 — exactly the case §6.1
+/// says must not be answered with a conflict.
+fn request_token(commit: &Commit) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    for part in [
+        commit.agent_id.as_bytes(),
+        &commit.seq.to_be_bytes(),
+        commit.card_digest.as_bytes(),
+        commit.created_at.as_bytes(),
+    ] {
+        hasher.update(part);
+        hasher.update([0]);
+    }
+    let digest = hasher.finalize();
+    // 32 hex characters, inside DynamoDB's 36-character ceiling.
+    digest[..16].iter().map(|b| format!("{b:02x}")).collect()
+}
+
 // --- cursors -------------------------------------------------------------
 
 /// Cursors are opaque to clients and carry only the four key attributes of the
@@ -370,6 +550,18 @@ fn decode_cursor(cursor: &str) -> StoreResult<Item> {
     // A cursor missing a key attribute would reach DynamoDB and come back as a
     // validation error, which this code would then report as a server fault.
     if key.len() != allowed.len() {
+        return Err(StoreError::BadCursor);
+    }
+    // Present is not the same as plausible. `gsi1pk` is a constant for this
+    // index, so a cursor naming anything else is one DynamoDB will reject —
+    // and a rejection surfacing as a 500 lets anyone fill the error budget with
+    // forged input, which is the one thing `BadCursor` exists to prevent.
+    if key
+        .get("gsi1pk")
+        .and_then(|v| v.as_s().ok())
+        .map(String::as_str)
+        != Some(crate::keys::LIST_PK)
+    {
         return Err(StoreError::BadCursor);
     }
     Ok(key)

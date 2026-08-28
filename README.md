@@ -172,16 +172,23 @@ deleted. Each run creates as few entries as it can and ends by withdrawing them
 
 ## Status
 
-Deployed to development and exercised end to end. The remaining known gap is
-below; everything else the audit of 26 August raised is closed.
+Deployed to development and exercised end to end, and put through ten rounds of
+independent adversarial review. Each round's report is in `audits/`, with every
+decision — including the ones not taken, and why — in `audits/LEDGER.md`.
 
-### Known gap
+### How the read path stays true
 
-The `v1/agents/…` pointers are a cache of the current version, refreshed after
-each commit so the edge can serve reads without touching compute. Two
-publications close together can still have those writes reordered, leaving the
-edge on the older card until someone publishes again. The refresh now re-reads
-the committed sequence first, which narrows the window to the gap between that
-check and the write, and an alarm fires if a refresh fails outright. Closing it
-properly means reconciling the pointers from the table itself, through DynamoDB
-Streams, outside the request path.
+The `v1/agents/…` pointers are what the edge serves, and the request path does
+not write them: the API role holds no write permission under `v1/` at all. They
+are converged from the register instead, by one function with two triggers — a
+DynamoDB stream that says *which* agent changed, and an hourly pass over every
+agent that makes the guarantee survive the stream losing a record. Neither is a
+source of truth; the register is. `SPEC.md` §6.6 states the design and the
+bound it offers, which is eventual rather than immediate and is written down
+rather than implied.
+
+This replaced an earlier design where the request path refreshed the pointers
+after each commit. Two publications close together could have those writes
+reordered, leaving the edge on the older card until someone published again —
+and nothing would ever notice, because the API answered correctly from the table
+either way.

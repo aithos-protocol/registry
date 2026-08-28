@@ -53,6 +53,24 @@ variable "write_rate_limit" {
   default     = 100
 }
 
+variable "sweep_schedule" {
+  description = "How often the read path is reconciled against the register. Hourly is far more often than a dropped stream record is expected, and a sweep over a small register costs almost nothing."
+  type        = string
+  default     = "rate(1 hour)"
+}
+
+variable "read_rate_limit" {
+  description = "Requests of any kind allowed per source address per five minutes. Must stay below what the stage throttle can serve (20 rps = 6000 per five minutes), or one address staying legal under every rule can still saturate the shared throttle and deny every write. 3000 is half of that, and still far above what any real consumer does."
+  type        = number
+  default     = 3000
+}
+
+variable "agent_write_rate_limit" {
+  description = "Writes allowed against a single agentId per five minutes, before WAF blocks. Higher than the per-address limit: this exists to stop a crowd aimed at one entry, not to constrain one publisher retrying."
+  type        = number
+  default     = 300
+}
+
 variable "invocation_alarm_threshold" {
   description = "Lambda invocations in five minutes that count as unusual. Writes are rare, so a sustained rate is not growth."
   type        = number

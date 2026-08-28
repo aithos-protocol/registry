@@ -12,6 +12,14 @@
 
 resource "aws_s3_bucket" "registry" {
   bucket = local.bucket_name
+
+  # The table carries `deletion_protection_enabled` and `prevent_destroy`; this
+  # bucket holds the append-only card corpus, which is the part that cannot be
+  # reconstructed from anything else. A `destroy` would fail on a non-empty
+  # bucket anyway, but relying on that is relying on an accident.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Versioning is not the append-only mechanism — the digest naming is. It is here
@@ -101,6 +109,36 @@ resource "aws_s3_bucket_lifecycle_configuration" "registry" {
 
     noncurrent_version_expiration {
       noncurrent_days = 30
+    }
+
+    # Every withdrawal deletes two pointers, and under versioning a delete is a
+    # marker rather than a removal. Once its noncurrent version ages out above,
+    # the marker is all that is left — and nothing expired it. Clutter rather
+    # than a correctness problem (the marker is what makes S3 answer 404), but
+    # it is permanent clutter that grows with every withdrawal.
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  # The card object is written before the conditional transaction that would
+  # make it reachable, so every lost race and every failed transaction leaves an
+  # object nothing indexes and nothing reads. They are unreachable — the API
+  # requires the `DIGEST#` item, written inside that transaction, before it will
+  # serve any bytes — but unreachable is not the same as gone, and this rule is
+  # filtered to `v1/`, so nothing collected them.
+  #
+  # Only *incomplete* uploads and superseded versions are expired here. A
+  # committed card under `versions/` is never overwritten and never deleted:
+  # that is the whole of the append-only promise.
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+
+    filter {}
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
     }
   }
 

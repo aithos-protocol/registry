@@ -9,6 +9,15 @@ pub fn agent_pk(agent_id: &str) -> String {
     format!("AGENT#{agent_id}")
 }
 
+/// The agent an item's partition key belongs to.
+///
+/// The inverse of [`agent_pk`]. The stream carries keys for every event,
+/// including a `REMOVE` that has no image, so reading the identifier from the
+/// key rather than the image is what lets every event name its agent.
+pub fn agent_id_of_pk(pk: &str) -> Option<&str> {
+    pk.strip_prefix("AGENT#").filter(|id| !id.is_empty())
+}
+
 /// Sort key of the mutable current-state item.
 pub const CURRENT_SK: &str = "CURRENT";
 
