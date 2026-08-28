@@ -58,14 +58,14 @@ resource "aws_wafv2_web_acl" "registry" {
           response_code            = 429
           custom_response_body_key = "rate-limited"
 
-          # WAF's body content-type enum has no `problem+json`, and the media
-          # type is what RFC 9457 makes the identifying signal — a client that
-          # dispatches on it would misclassify this exactly during an incident.
-          # The header overrides what the enum could not express.
-          response_header {
-            name  = "content-type"
-            value = "application/problem+json"
-          }
+          # The body is an RFC 9457 problem document; the media type is not.
+          # WAF's body content-type enum offers only APPLICATION_JSON, and it
+          # refuses a `response_header` overriding `content-type`
+          # (UNSUPPORTED_PARAMETER_VALUE / HEADER_NAME) — a restriction found by
+          # trying it, not by reading it. So a rate block arrives as
+          # `application/json` carrying every member a problem document has.
+          # `SPEC.md` §9 records this as an exception rather than claiming a
+          # media type the edge cannot send.
         }
       }
     }
@@ -137,14 +137,14 @@ resource "aws_wafv2_web_acl" "registry" {
           response_code            = 429
           custom_response_body_key = "rate-limited"
 
-          # WAF's body content-type enum has no `problem+json`, and the media
-          # type is what RFC 9457 makes the identifying signal — a client that
-          # dispatches on it would misclassify this exactly during an incident.
-          # The header overrides what the enum could not express.
-          response_header {
-            name  = "content-type"
-            value = "application/problem+json"
-          }
+          # The body is an RFC 9457 problem document; the media type is not.
+          # WAF's body content-type enum offers only APPLICATION_JSON, and it
+          # refuses a `response_header` overriding `content-type`
+          # (UNSUPPORTED_PARAMETER_VALUE / HEADER_NAME) — a restriction found by
+          # trying it, not by reading it. So a rate block arrives as
+          # `application/json` carrying every member a problem document has.
+          # `SPEC.md` §9 records this as an exception rather than claiming a
+          # media type the edge cannot send.
         }
       }
     }
@@ -185,14 +185,14 @@ resource "aws_wafv2_web_acl" "registry" {
           response_code            = 429
           custom_response_body_key = "rate-limited"
 
-          # WAF's body content-type enum has no `problem+json`, and the media
-          # type is what RFC 9457 makes the identifying signal — a client that
-          # dispatches on it would misclassify this exactly during an incident.
-          # The header overrides what the enum could not express.
-          response_header {
-            name  = "content-type"
-            value = "application/problem+json"
-          }
+          # The body is an RFC 9457 problem document; the media type is not.
+          # WAF's body content-type enum offers only APPLICATION_JSON, and it
+          # refuses a `response_header` overriding `content-type`
+          # (UNSUPPORTED_PARAMETER_VALUE / HEADER_NAME) — a restriction found by
+          # trying it, not by reading it. So a rate block arrives as
+          # `application/json` carrying every member a problem document has.
+          # `SPEC.md` §9 records this as an exception rather than claiming a
+          # media type the edge cannot send.
         }
       }
     }

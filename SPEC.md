@@ -624,12 +624,16 @@ Write rate limits are per source address and per `agentId`.
 
 RFC 9457 `application/problem+json`. Every refusal **the registry makes** is
 one, including those made before a handler runs — a body stopped by the size
-limit, a malformed query parameter, an unroutable path — and rate blocks, which
-the edge answers with a `RATE_LIMITED` problem document rather than its own
-error page.
+limit, a malformed query parameter, an unroutable path.
 
-Two refusals are **not** problem documents, and a client must handle them by
-status alone:
+A rate block is answered by the edge with a `RATE_LIMITED` body carrying every
+member a problem document has, but with media type `application/json`: the edge
+firewall's body types do not include `application/problem+json` and it refuses a
+header overriding the content type. A client keying on `code` reads it; a client
+keying on the media type alone does not.
+
+Two refusals carry no `code` at all, and a client must handle them by status
+alone:
 
 - `429` from the gateway's own throughput limit. It is a fixed
   `{"message": "Too Many Requests"}`; the gateway offers no way to reshape it.
