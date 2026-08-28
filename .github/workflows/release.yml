@@ -2,9 +2,16 @@
 #
 #   git tag v0.1.0 && git push origin v0.1.0
 #
-# Every binary is built on a runner whose architecture matches its target, so
-# nothing here cross-compiles: a cross toolchain is one more thing between the
-# source and the artifact, and this artifact's whole job is to be trustworthy.
+# Binaries are built on a runner whose architecture matches the target wherever
+# that is possible, because a cross toolchain is one more thing between the
+# source and the artifact and this artifact's whole job is to be trustworthy.
+#
+# The one exception is x86_64 macOS, built on Apple Silicon. That is Apple's own
+# toolchain targeting the other half of its own platform — the mechanism behind
+# every universal binary — not a third-party cross setup. It is worth the
+# exception: GitHub is retiring the macos-13 runners, and a release that cannot
+# be cut without a scarce and sunsetting runner is a release process that will
+# fail at the worst moment. It queued for ten minutes on the first tag.
 #
 # Only first-party actions are used. A release pipeline for a tool that holds
 # private keys is a supply chain, and every third-party action in it is another
@@ -31,7 +38,7 @@ jobs:
       matrix:
         include:
           - { runner: macos-14,        target: aarch64-apple-darwin }
-          - { runner: macos-13,        target: x86_64-apple-darwin }
+          - { runner: macos-14,        target: x86_64-apple-darwin }
           # musl, so the Linux builds carry no glibc version floor and run on
           # anything from a distroless container to a decade-old server.
           - { runner: ubuntu-24.04,    target: x86_64-unknown-linux-musl }
