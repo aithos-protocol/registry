@@ -91,8 +91,44 @@ pub fn signed_card(version: &str, keys: &[&Key]) -> Value {
     card
 }
 
+/// Build the publication proof that §6.2 requires alongside a card.
+pub fn proof(key: &Key, agent_id: &str, card_digest: &str) -> Value {
+    let payload = json!({
+        "action": "publish",
+        "agentId": agent_id,
+        "cardDigest": card_digest,
+        "issuedAt": "2026-08-25T12:00:00.000Z",
+        "registryOrigin": ORIGIN,
+    });
+    let bytes = a2a_card::canonical::canonicalize(&payload).unwrap();
+    let header = json!({"alg": "ES256", "typ": "JOSE", "kid": key.kid()});
+    let protected =
+        Base64UrlUnpadded::encode_string(&a2a_card::canonical::canonicalize(&header).unwrap());
+    json!({
+        "protected": protected,
+        "payload": Base64UrlUnpadded::encode_string(&bytes),
+        "signature": key.sign(&a2a_card::canonical::signing_input(&protected, &bytes)),
+    })
+}
+
+/// A write envelope whose proof is signed by the first key, for the entry that
+/// key names. Rotation and takeover tests use [`write_body_for`] instead.
 pub fn write_body(card: &Value, keys: &[&Key]) -> Value {
-    json!({ "agentCard": card, "keys": keys.iter().map(|k| k.jwk()).collect::<Vec<_>>() })
+    write_body_for(&keys[0].kid(), card, keys, keys[0])
+}
+
+pub fn write_body_for(agent_id: &str, card: &Value, keys: &[&Key], _signer: &Key) -> Value {
+    // Some tests submit a card the registry must refuse. The card is checked
+    // before the proof is, so a placeholder digest here never masks the reason
+    // such a test is asserting on.
+    let digest = a2a_card::validate_value(card.clone())
+        .map(|c| c.digest)
+        .unwrap_or_else(|_| "sha256:not-a-valid-card".to_string());
+    json!({
+        "agentCard": card,
+        "keys": keys.iter().map(|k| k.jwk()).collect::<Vec<_>>(),
+        "proofs": keys.iter().map(|k| proof(k, agent_id, &digest)).collect::<Vec<_>>(),
+    })
 }
 
 pub fn withdraw_body(key: &Key, agent_id: &str, card_digest: &str) -> Value {
@@ -154,9 +190,37 @@ pub async fn put_with(
     )
 }
 
-pub async fn get(app: &Router, path: &str) -> (StatusCode, Vec<u8>, Response<Body>) {
-    let req = Request::builder().uri(path).body(Body::empty()).unwrap();
+/// Send a request whose body is not necessarily valid JSON — the point of some
+/// tests is what happens before anything parses it.
+pub async fn send_raw(
+    app: &Router,
+    method: &str,
+    path: &str,
+    body: String,
+) -> (StatusCode, Vec<u8>, Response<Body>) {
+    let req = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(Body::from(body))
+        .unwrap();
     send(app, req).await
+}
+
+pub async fn get(app: &Router, path: &str) -> (StatusCode, Vec<u8>, Response<Body>) {
+    get_with(app, path, &[]).await
+}
+
+pub async fn get_with(
+    app: &Router,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Vec<u8>, Response<Body>) {
+    let mut req = Request::builder().uri(path);
+    for (name, value) in headers {
+        req = req.header(*name, *value);
+    }
+    send(app, req.body(Body::empty()).unwrap()).await
 }
 
 pub async fn get_json(app: &Router, path: &str) -> (StatusCode, Value) {

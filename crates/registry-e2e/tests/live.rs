@@ -65,7 +65,7 @@ async fn an_entry_lives_its_whole_life() {
         &client,
         &origin,
         &agent_id,
-        &write_body(&first_card, &[&genesis]),
+        &write_body(&origin, &first_card, &[&genesis]),
     )
     .await;
     created.expect(201, "first publication");
@@ -127,7 +127,13 @@ async fn an_entry_lives_its_whole_life() {
         &client,
         &origin,
         &agent_id,
-        &write_body(&second_card, &[&genesis, &backup]),
+        &write_body_for(
+            &origin,
+            &agent_id,
+            &second_card,
+            &[&genesis, &backup],
+            &genesis,
+        ),
     )
     .await;
     updated.expect(200, "co-signed update");
@@ -142,7 +148,7 @@ async fn an_entry_lives_its_whole_life() {
         &client,
         &origin,
         &agent_id,
-        &write_body(&third_card, &[&backup]),
+        &write_body_for(&origin, &agent_id, &third_card, &[&backup], &backup),
     )
     .await;
     rotated.expect(200, "rotation");
@@ -163,7 +169,7 @@ async fn an_entry_lives_its_whole_life() {
         &client,
         &origin,
         &agent_id,
-        &write_body(&rogue, &[&genesis]),
+        &write_body_for(&origin, &agent_id, &rogue, &[&genesis], &genesis),
     )
     .await
     .expect(403, "write signed only by the retired key")
@@ -295,7 +301,7 @@ async fn writes_are_refused_for_the_right_reasons() {
     let agent_id = owner.kid();
 
     let (first, _) = sign_card(card_body("1.0.0", "refusals"), &[&owner]);
-    let first_body = write_body(&first, &[&owner]);
+    let first_body = write_body(&origin, &first, &[&owner]);
     let created = put(&client, &origin, &agent_id, &first_body).await;
     created.expect(201, "first publication");
     let digest = created.json()["cardDigest"].as_str().unwrap().to_string();
@@ -307,7 +313,7 @@ async fn writes_are_refused_for_the_right_reasons() {
         &client,
         &origin,
         &owner.kid(),
-        &write_body(&theirs, &[&stranger]),
+        &write_body_for(&origin, &owner.kid(), &theirs, &[&stranger], &stranger),
     )
     .await
     .expect(403, "another key writing to an existing entry")
@@ -328,9 +334,14 @@ async fn writes_are_refused_for_the_right_reasons() {
     // Rolling the entry back is the replay that matters, and it is refused.
     // The body below is validly signed and anybody could have observed it.
     let (second, _) = sign_card(card_body("2.0.0", "refusals"), &[&owner]);
-    put(&client, &origin, &agent_id, &write_body(&second, &[&owner]))
-        .await
-        .expect(200, "moving forward");
+    put(
+        &client,
+        &origin,
+        &agent_id,
+        &write_body(&origin, &second, &[&owner]),
+    )
+    .await
+    .expect(200, "moving forward");
 
     put(&client, &origin, &agent_id, &first_body)
         .await
@@ -344,11 +355,19 @@ async fn writes_are_refused_for_the_right_reasons() {
         .unwrap()
         .insert("d".into(), json!("bm90LWEtcmVhbC1rZXk"));
     let (next, _) = sign_card(card_body("1.1.0", "leaky key"), &[&owner]);
+    // The envelope has to be otherwise well-formed, proofs included: the
+    // envelope is parsed before any key is, so a body missing `proofs` is
+    // refused as malformed JSON and never reaches the check this asserts on.
+    let digest = a2a_card::validate_value(next.clone()).unwrap().digest;
     put(
         &client,
         &origin,
         &agent_id,
-        &json!({"agentCard": next, "keys": [leaky]}),
+        &json!({
+            "agentCard": next,
+            "keys": [leaky],
+            "proofs": [proof(&owner, &origin, &agent_id, &digest)],
+        }),
     )
     .await
     .expect(400, "a JWK carrying private material")
@@ -363,7 +382,14 @@ async fn writes_are_refused_for_the_right_reasons() {
         &client,
         &origin,
         &agent_id,
-        &json!({"agentCard": bad_card, "keys": [owner.jwk()]}),
+        &json!({
+            "agentCard": bad_card,
+            "keys": [owner.jwk()],
+            // Unusable, deliberately — the card is refused long before it is
+            // read. Present so the envelope is well-formed and the refusal is
+            // the one this test is about.
+            "proofs": [{"protected": "eyJ9", "payload": "e30", "signature": "AA"}],
+        }),
     )
     .await;
     response.expect(422, "a card that skipped the presence rules");

@@ -20,7 +20,10 @@ pub mod write;
 pub use error::{Code, RegistryError, Result};
 pub use jwk::{Alg, Jwk};
 pub use jws::ProtectedHeader;
-pub use write::{AcceptedWrite, AgentState, Outcome, Status, evaluate_withdrawal, evaluate_write};
+pub use write::{
+    AcceptedWrite, AgentState, DetachedJws, Outcome, PUBLISH_ACTION, Status, WITHDRAW_ACTION,
+    evaluate_withdrawal, evaluate_write, precedence,
+};
 
 /// Derive an agent identifier from its genesis key.
 ///

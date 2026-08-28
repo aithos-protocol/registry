@@ -71,6 +71,68 @@ pub fn sign(card: &Value, keys: &[&PrivateKey], jku: Option<&str>) -> Result<Can
     Ok(a2a_card::validate_value(body)?)
 }
 
+/// Build the publication proof §6.2 requires alongside a card.
+///
+/// The card's own signatures say "this document was signed by these keys". They
+/// do not say where the signer wants it published, or under which identifier —
+/// a card is portable by design. The proof says exactly that, and only that.
+pub fn publication_proof(
+    key: &PrivateKey,
+    registry: &str,
+    agent_id: &str,
+    card_digest: &str,
+) -> Result<Value> {
+    let payload = json!({
+        "action": "publish",
+        "agentId": agent_id,
+        "cardDigest": card_digest,
+        "issuedAt": now_rfc3339(),
+        "registryOrigin": registry,
+    });
+    let bytes = canonicalize(&payload)?;
+    let header = json!({ "alg": "ES256", "typ": "JOSE", "kid": key.kid()? });
+    let protected = b64url(&canonicalize(&header)?);
+    Ok(json!({
+        "protected": protected,
+        "payload": b64url(&bytes),
+        "signature": key.sign(&signing_input(&protected, &bytes)),
+    }))
+}
+
+/// Build the withdrawal §6.5 requires.
+///
+/// The same construction as the publication proof, over a different action and
+/// bound to the digest of the card being withdrawn — so a withdrawal captured
+/// today cannot be replayed against a later version of the entry.
+pub fn withdrawal(
+    key: &PrivateKey,
+    registry: &str,
+    agent_id: &str,
+    card_digest: &str,
+) -> Result<Value> {
+    let payload = json!({
+        "action": "withdraw",
+        "agentId": agent_id,
+        "cardDigest": card_digest,
+        "issuedAt": now_rfc3339(),
+        "registryOrigin": registry,
+    });
+    let bytes = canonicalize(&payload)?;
+    let header = json!({ "alg": "ES256", "typ": "JOSE", "kid": key.kid()? });
+    let protected = b64url(&canonicalize(&header)?);
+    Ok(json!({
+        "protected": protected,
+        "payload": b64url(&bytes),
+        "signature": key.sign(&signing_input(&protected, &bytes)),
+    }))
+}
+
+fn now_rfc3339() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .expect("RFC 3339 formatting of a valid instant cannot fail")
+}
+
 /// Which entry a card belongs to.
 ///
 /// The identifier is the thumbprint of the entry's *genesis* key and never
@@ -83,11 +145,20 @@ pub fn sign(card: &Value, keys: &[&PrivateKey], jku: Option<&str>) -> Result<Can
 pub fn agent_of(card: &Value, registry: &str) -> Option<String> {
     let signatures = card.get("signatures")?.as_array()?;
     for entry in signatures {
-        let protected = entry.get("protected")?.as_str()?;
+        // Every step here skips to the next signature rather than giving up on
+        // the card. A `?` anywhere in this loop means a card whose *first*
+        // signature is unreadable loses its entry association entirely — and
+        // `publish` then falls back to the signing key's own thumbprint,
+        // quietly creating a second entry instead of updating the one this card
+        // belongs to. That is the worst outcome available here, so nothing in
+        // this loop may return early.
+        let Some(protected) = entry.get("protected").and_then(Value::as_str) else {
+            continue;
+        };
         let Ok(header) = registry_core::jws::parse_protected(protected) else {
             continue;
         };
-        let jku = header.jku?;
+        let Some(jku) = header.jku else { continue };
         let prefix = format!("{registry}/v1/agents/");
         if let Some(rest) = jku.strip_prefix(&prefix)
             && let Some(id) = rest.strip_suffix("/jwks.json")
@@ -147,14 +218,58 @@ mod tests {
         a2a_card::validate_value(card).expect("a scaffolded card must be publishable as is");
     }
 
+    /// The CLI and the registry must agree exactly, so this drives the real
+    /// admission rules rather than asserting on the shape of what was produced.
     #[test]
-    fn signing_produces_a_card_the_registry_would_accept() {
+    fn signing_produces_a_write_the_registry_would_accept() {
+        const REGISTRY: &str = "https://registry.example";
         let key = PrivateKey::generate();
+        let agent_id = key.kid().unwrap();
         let card = sign(&scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let proof = publication_proof(&key, REGISTRY, &agent_id, &card.digest).unwrap();
 
-        let state = None;
-        registry_core::evaluate_write(&key.kid().unwrap(), &card, &[key.public_jwk()], state)
-            .expect("the signed card must satisfy the write rules");
+        registry_core::evaluate_write(
+            &agent_id,
+            &card,
+            &[key.public_jwk()],
+            &[jws_of(&proof)],
+            REGISTRY,
+            None,
+        )
+        .expect("the signed card and its proof must satisfy the write rules");
+    }
+
+    /// A proof minted for one registry must not open an entry at another. This
+    /// is the property that stops a card published anywhere from being replayed
+    /// into this registry by whoever can read it.
+    #[test]
+    fn a_proof_does_not_travel_between_registries() {
+        let key = PrivateKey::generate();
+        let agent_id = key.kid().unwrap();
+        let card = sign(&scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let proof =
+            publication_proof(&key, "https://elsewhere.example", &agent_id, &card.digest).unwrap();
+
+        let err = registry_core::evaluate_write(
+            &agent_id,
+            &card,
+            &[key.public_jwk()],
+            &[jws_of(&proof)],
+            "https://registry.example",
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.code, registry_core::Code::SignatureInvalid);
+        assert!(err.detail.contains("registryOrigin"), "{}", err.detail);
+    }
+
+    fn jws_of(proof: &Value) -> registry_core::DetachedJws {
+        let field = |n: &str| proof[n].as_str().unwrap().to_string();
+        registry_core::DetachedJws {
+            protected: field("protected"),
+            payload: field("payload"),
+            signature: field("signature"),
+        }
     }
 
     /// Signatures made over a different authorized set must not travel with an

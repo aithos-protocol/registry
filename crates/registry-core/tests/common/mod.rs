@@ -55,6 +55,12 @@ impl Signer {
             .to_string()
     }
 
+    /// Sign an arbitrary signing input. Public so a test can assemble a
+    /// document no honest client would produce.
+    pub fn sign_input(&self, input: &[u8]) -> Vec<u8> {
+        self.sign(input)
+    }
+
     fn sign(&self, input: &[u8]) -> Vec<u8> {
         match self {
             Signer::P256(sk) => {
@@ -128,4 +134,16 @@ pub fn sign_payload(signer: &Signer, payload: &Value) -> (String, String, String
     let protected = b64url(&canonicalize(&h).unwrap());
     let sig = signer.sign(&signing_input(&protected, &bytes));
     (protected, payload_b64, b64url(&sig))
+}
+
+/// Assemble a card carrying one caller-supplied header and signature, with no
+/// key needed. Used to submit signatures that no honest signer could produce.
+pub fn sign_card_raw(body: Value, header: &Value, signature_b64: &str) -> CanonicalCard {
+    let protected = b64url(&canonicalize(header).unwrap());
+    let mut card = body;
+    card.as_object_mut().unwrap().insert(
+        "signatures".into(),
+        json!([{"protected": protected, "signature": signature_b64}]),
+    );
+    validate_value(card).unwrap()
 }

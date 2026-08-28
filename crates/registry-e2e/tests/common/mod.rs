@@ -119,8 +119,50 @@ pub fn sign_card(body: Value, keys: &[&Key]) -> (Value, Vec<u8>) {
     (card, canonical.bytes)
 }
 
-pub fn write_body(card: &Value, keys: &[&Key]) -> Value {
-    json!({ "agentCard": card, "keys": keys.iter().map(|k| k.jwk()).collect::<Vec<_>>() })
+/// Build the publication proof that §6.2 requires alongside a card.
+pub fn proof(key: &Key, origin: &str, agent_id: &str, card_digest: &str) -> Value {
+    let payload = json!({
+        "action": "publish",
+        "agentId": agent_id,
+        "cardDigest": card_digest,
+        "issuedAt": "2026-08-25T12:00:00.000Z",
+        "registryOrigin": origin,
+    });
+    let bytes = a2a_card::canonical::canonicalize(&payload).unwrap();
+    let header = json!({"alg": "ES256", "typ": "JOSE", "kid": key.kid()});
+    let protected =
+        Base64UrlUnpadded::encode_string(&a2a_card::canonical::canonicalize(&header).unwrap());
+    json!({
+        "protected": protected,
+        "payload": Base64UrlUnpadded::encode_string(&bytes),
+        "signature": key.sign(&a2a_card::canonical::signing_input(&protected, &bytes)),
+    })
+}
+
+/// A write envelope whose proof is signed by the first key, for the entry that
+/// key names. Rotation and takeover tests use [`write_body_for`] instead.
+pub fn write_body(origin: &str, card: &Value, keys: &[&Key]) -> Value {
+    write_body_for(origin, &keys[0].kid(), card, keys, keys[0])
+}
+
+pub fn write_body_for(
+    origin: &str,
+    agent_id: &str,
+    card: &Value,
+    keys: &[&Key],
+    _signer: &Key,
+) -> Value {
+    // Some tests submit a card the registry must refuse. The card is checked
+    // before the proof is, so a placeholder digest here never masks the reason
+    // such a test is asserting on.
+    let digest = a2a_card::validate_value(card.clone())
+        .map(|c| c.digest)
+        .unwrap_or_else(|_| "sha256:not-a-valid-card".to_string());
+    json!({
+        "agentCard": card,
+        "keys": keys.iter().map(|k| k.jwk()).collect::<Vec<_>>(),
+        "proofs": keys.iter().map(|k| proof(k, origin, agent_id, &digest)).collect::<Vec<_>>(),
+    })
 }
 
 pub fn withdraw_body(key: &Key, origin: &str, agent_id: &str, card_digest: &str) -> Value {

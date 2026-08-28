@@ -13,6 +13,7 @@ path = "src/main.rs"
 # Deliberately depends only on the deterministic core. Pulling in the server
 # side would drag the AWS SDK into every `cargo install`, for nothing.
 [dependencies]
+time = { workspace = true }
 a2a-card = { path = "../a2a-card" }
 registry-core = { path = "../registry-core" }
 clap = { workspace = true }

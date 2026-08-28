@@ -12,6 +12,10 @@ pub enum Code {
     KidNotThumbprint,
     AlgNotAllowed,
     UnusedKey,
+    TooManyKeys,
+    DuplicateKey,
+    KeyInvalid,
+    UnprovenKey,
     CardInvalid,
 }
 
@@ -27,6 +31,10 @@ impl Code {
             Code::KidNotThumbprint => "KID_NOT_THUMBPRINT",
             Code::AlgNotAllowed => "ALG_NOT_ALLOWED",
             Code::UnusedKey => "UNUSED_KEY",
+            Code::TooManyKeys => "TOO_MANY_KEYS",
+            Code::DuplicateKey => "DUPLICATE_KEY",
+            Code::KeyInvalid => "KEY_INVALID",
+            Code::UnprovenKey => "UNPROVEN_KEY",
             Code::CardInvalid => "CARD_INVALID",
         }
     }
