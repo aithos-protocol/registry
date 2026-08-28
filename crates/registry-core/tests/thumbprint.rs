@@ -35,6 +35,58 @@ fn thumbprint_ignores_optional_members() {
     );
 }
 
+/// §7.2 requires the published key set to carry a `kid`, and §3.2 makes that
+/// `kid` the thumbprint. A submitted JWK may say anything; the registry has to
+/// publish what it verified, not what it was handed.
+#[test]
+fn the_published_form_is_rebuilt_rather_than_passed_through() {
+    let hostile = json!({
+        "kty": "OKP",
+        "crv": "Ed25519",
+        "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+        // Names a different key entirely, and advertises an algorithm this
+        // registry does not accept.
+        "kid": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "alg": "none",
+        "x5u": "https://attacker.example/chain.pem",
+    });
+
+    let parsed = Jwk::parse(&hostile).unwrap();
+    let published = parsed.to_public();
+
+    assert_eq!(
+        published["kid"],
+        json!(parsed.thumbprint()),
+        "kid is the computed thumbprint"
+    );
+    assert_eq!(published["use"], json!("sig"));
+    for smuggled in ["alg", "x5u"] {
+        assert!(
+            published.get(smuggled).is_none(),
+            "{smuggled} was republished"
+        );
+    }
+    // The published form is itself a valid key with the same identity.
+    assert_eq!(
+        Jwk::parse(&published).unwrap().thumbprint(),
+        parsed.thumbprint()
+    );
+}
+
+#[test]
+fn every_supported_key_type_publishes_a_kid() {
+    let keys = [
+        json!({"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo"}),
+        json!({"kty":"EC","crv":"P-256",
+               "x":"f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+               "y":"x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"}),
+    ];
+    for key in keys {
+        let parsed = Jwk::parse(&key).unwrap();
+        assert_eq!(parsed.to_public()["kid"], json!(parsed.thumbprint()));
+    }
+}
+
 #[test]
 fn private_material_is_refused() {
     for member in ["d", "p", "q", "dp", "dq", "qi", "oth", "k"] {

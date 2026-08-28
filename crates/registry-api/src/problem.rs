@@ -42,7 +42,6 @@ impl Problem {
     fn title(&self) -> &'static str {
         match self.code {
             "JSON_INVALID" => "Invalid JSON",
-            "IDEMPOTENCY_KEY_REQUIRED" => "Idempotency key required",
             "PRIVATE_KEY_SUBMITTED" => "Private key material submitted",
             "NOT_AUTHORIZED_KEY" => "Not signed by an authorized key",
             "NOT_FOUND" => "Not found",
@@ -57,6 +56,18 @@ impl Problem {
             "KID_NOT_THUMBPRINT" => "Key identifier is not the key's thumbprint",
             "ALG_NOT_ALLOWED" => "Algorithm is not allowed",
             "UNUSED_KEY" => "A submitted key signs nothing",
+            "TOO_MANY_KEYS" => "Too many keys submitted",
+            "DUPLICATE_KEY" => "The same key was submitted twice",
+            "KEY_INVALID" => "A submitted key is malformed",
+            "UNPROVEN_KEY" => "A signing key did not ask for this publication",
+            // Codes produced by the layers around the handlers, which had no
+            // arm here and so all read "Request rejected" — the one field of a
+            // problem document a human sees first, saying nothing.
+            "METHOD_NOT_ALLOWED" => "Method not allowed",
+            "RATE_LIMITED" => "Too many requests",
+            "FORBIDDEN" => "Not reachable this way",
+            "INTERNAL" => "The registry could not complete this request",
+            "REQUEST_REFUSED" => "Request refused",
             "CONFLICT" => "The agent changed concurrently",
             "CURSOR_INVALID" => "Pagination cursor is not valid",
             _ => "Request rejected",
@@ -112,7 +123,18 @@ impl From<crate::store::StoreError> for Problem {
                 "the `cursor` parameter did not come from this registry",
             )
             .at("/cursor"),
-            crate::store::StoreError::Backend(d) => Problem::new(500, "INTERNAL", d),
+            // The detail names tables, indexes and request ids. It belongs in
+            // the log, where an operator can correlate it, not in a public
+            // response describing the inside of the service to anyone who
+            // provokes an error.
+            crate::store::StoreError::Backend(detail) => {
+                tracing::error!(%detail, "storage backend failure");
+                Problem::new(
+                    500,
+                    "INTERNAL",
+                    "the registry could not complete this request",
+                )
+            }
         }
     }
 }

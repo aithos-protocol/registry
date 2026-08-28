@@ -39,9 +39,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: rustsec/audit-check@v2
+      # `cargo deny` alone, deliberately. It reads `deny.toml`, which holds the
+      # license allowlist and the one documented RUSTSEC exception, and it
+      # covers advisories as well. `rustsec/audit-check` used to run alongside
+      # it and reads `.cargo/audit.toml` instead — a file that does not exist
+      # here — so it reported the documented exception as a failure on every
+      # run. A check that is always red is a check nobody reads.
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          command: check bans licenses sources advisories
 
   terraform:
     runs-on: ubuntu-latest

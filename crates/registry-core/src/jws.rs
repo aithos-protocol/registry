@@ -93,10 +93,44 @@ pub fn parse_protected(protected_b64: &str) -> Result<ProtectedHeader> {
             let s = v.as_str().ok_or_else(|| {
                 RegistryError::new(Code::SignatureInvalid, "`jku` is not a string")
             })?;
-            if !s.starts_with("https://") || s.contains('#') || s.contains('@') {
+            // `@` was rejected anywhere in the string, which also refuses a
+            // legitimate path or query; and a bare `starts_with` accepted
+            // `https:///path`, whose authority is empty, along with control
+            // characters and whitespace. Both halves are checked against the
+            // authority component instead.
+            // RFC 3986 §3.1 makes the scheme case-insensitive, so `HTTPS://`
+            // is the same URL. Refusing it rejected a valid card for a reason
+            // that is not a rule.
+            let lowered = s.to_ascii_lowercase();
+            let Some(rest) = lowered.strip_prefix("https://") else {
                 return Err(RegistryError::new(
                     Code::SignatureInvalid,
-                    "`jku` must be an absolute HTTPS URL with no userinfo and no fragment",
+                    "`jku` must be an absolute HTTPS URL",
+                ));
+            };
+            let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            if authority.is_empty() {
+                return Err(RegistryError::new(
+                    Code::SignatureInvalid,
+                    "`jku` names no host",
+                ));
+            }
+            if authority.contains('@') {
+                return Err(RegistryError::new(
+                    Code::SignatureInvalid,
+                    "`jku` carries userinfo, which would name a host other than it appears to",
+                ));
+            }
+            if s.contains('#') {
+                return Err(RegistryError::new(
+                    Code::SignatureInvalid,
+                    "`jku` carries a fragment, which is never sent to a server",
+                ));
+            }
+            if s.chars().any(|c| c.is_control() || c == ' ') {
+                return Err(RegistryError::new(
+                    Code::SignatureInvalid,
+                    "`jku` contains whitespace or a control character",
                 ));
             }
             Some(s.to_string())
@@ -179,18 +213,39 @@ fn verify_es256(x: &[u8], y: &[u8], sig: &[u8], input: &[u8]) -> Result<bool> {
     let point = EncodedPoint::from_affine_coordinates(x.into(), y.into(), false);
     let Ok(vk) = VerifyingKey::from_encoded_point(&point) else {
         return Err(RegistryError::new(
-            Code::CardInvalid,
+            Code::KeyInvalid,
             "EC point is not on the P-256 curve",
         ));
     };
     let Ok(signature) = Signature::from_slice(sig) else {
         return Ok(false);
     };
+    // ECDSA admits two valid signatures per message, `(r, s)` and `(r, n-s)`,
+    // so one signed card has more than one valid byte encoding. Both halves are
+    // accepted here deliberately. RFC 7518 does not require the low form and
+    // roughly half of ECDSA implementations emit the high one, so refusing it
+    // would reject correctly signed A2A cards from other tooling — a real
+    // interoperability cost. What it would buy is nothing this registry needs:
+    // a card in either form is still addressed by its own digest, still cannot
+    // be published without a publication proof, and still cannot displace the
+    // current version without moving `version` forward. The only visible effect
+    // is that a client which re-signs rather than resends gets a new digest and
+    // so a version conflict instead of the no-op of §6.1 — which §6.1 already
+    // says, and which resending the published bytes avoids.
     Ok(vk.verify(input, &signature).is_ok())
 }
 
+/// Verify an Ed25519 signature under RFC 8032's **strict** rules.
+///
+/// `Verifier::verify` uses the permissive, cofactorless equation and checks
+/// nothing about the public key's order. Under it the identity point is a valid
+/// key for which the all-but-one-byte-zero signature verifies over *every*
+/// message — so a fixed, publicly derivable `agentId` would be writable by
+/// anyone, with no key material at all. `verify_strict` rejects small-order and
+/// non-canonical points on both `A` and `R`, which is the property this registry
+/// actually depends on: that a signature names exactly one key holder.
 fn verify_ed25519(x: &[u8], sig: &[u8], input: &[u8]) -> Result<bool> {
-    use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+    use ed25519_dalek::{Signature, VerifyingKey};
 
     if sig.len() != 64 {
         return Err(RegistryError::new(
@@ -201,13 +256,22 @@ fn verify_ed25519(x: &[u8], sig: &[u8], input: &[u8]) -> Result<bool> {
     let bytes: [u8; 32] = x.try_into().expect("validated to 32 bytes at parse time");
     let Ok(vk) = VerifyingKey::from_bytes(&bytes) else {
         return Err(RegistryError::new(
-            Code::CardInvalid,
+            Code::KeyInvalid,
             "not a valid Ed25519 public key",
         ));
     };
+    // A key of small order can never sign anything meaningful, so refusing it
+    // at the key rather than at the signature keeps the reason legible: the
+    // problem is the key that was submitted, not the bytes that accompanied it.
+    if vk.is_weak() {
+        return Err(RegistryError::new(
+            Code::AlgNotAllowed,
+            "Ed25519 public key is of small order and cannot identify a signer",
+        ));
+    }
     let signature = Signature::from_slice(sig)
         .map_err(|_| RegistryError::new(Code::SignatureInvalid, "malformed Ed25519 signature"))?;
-    Ok(vk.verify(input, &signature).is_ok())
+    Ok(vk.verify_strict(input, &signature).is_ok())
 }
 
 fn verify_rs256(n: &[u8], e: &[u8], sig: &[u8], input: &[u8]) -> Result<bool> {
@@ -218,7 +282,7 @@ fn verify_rs256(n: &[u8], e: &[u8], sig: &[u8], input: &[u8]) -> Result<bool> {
 
     let Ok(key) = RsaPublicKey::new(BigUint::from_bytes_be(n), BigUint::from_bytes_be(e)) else {
         return Err(RegistryError::new(
-            Code::CardInvalid,
+            Code::KeyInvalid,
             "not a valid RSA public key",
         ));
     };

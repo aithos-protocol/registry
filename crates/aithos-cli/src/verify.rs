@@ -67,6 +67,10 @@ impl Report {
 /// the card's own `jku`, which proves only internal consistency — the document
 /// and the key it names come from the same place.
 pub fn verify(card: &CanonicalCard, trusted: &BTreeMap<String, Value>) -> Result<Report> {
+    // An anchor was supplied, so the question being asked is "was this signed by
+    // a key I hold?" — and falling back to the card's own `jku` answers a
+    // different question while looking like an answer to that one.
+    let anchored = !trusted.is_empty();
     let payload = card.signing_payload()?;
     let signatures = card
         .value
@@ -101,6 +105,19 @@ pub fn verify(card: &CanonicalCard, trusted: &BTreeMap<String, Value>) -> Result
 
         let (jwk, source) = match trusted.get(&header.kid) {
             Some(jwk) => (Some(jwk.clone()), Some(KeySource::Trusted)),
+            None if anchored => {
+                results.push(SignatureResult {
+                    kid: header.kid.clone(),
+                    alg: header.alg.as_str().into(),
+                    source: None,
+                    outcome: Err(
+                        "no key you supplied has this thumbprint; the card's own `jku` was \
+                         not consulted, because a trusted key set was given"
+                            .into(),
+                    ),
+                });
+                continue;
+            }
             None => match header.jku.as_deref() {
                 Some(url) => match fetch_key(url, &header.kid) {
                     Ok(jwk) => (Some(jwk), Some(KeySource::SelfDeclared)),
@@ -158,8 +175,17 @@ pub fn verify(card: &CanonicalCard, trusted: &BTreeMap<String, Value>) -> Result
 
 /// Fetch one key from a JWKS named by a card.
 ///
-/// The URL comes from the document being checked, so it is treated as hostile
-/// input: HTTPS only, no redirects at all, a short timeout and a bounded body.
+/// The URL comes from the document being checked, so it is bounded on every
+/// axis this tool can bound it: HTTPS only, no redirects at all, a short timeout
+/// and a body limited while it is read.
+///
+/// Not bounded: where the name resolves to. A hostile card can point this at a
+/// private address and read a coarse signal from the failure text. That is
+/// accepted rather than overlooked — this is a command an operator runs against
+/// a card they chose to inspect, from their own machine, and an address
+/// blocklist is a large and evadable surface for a request the operator could
+/// have made themselves with `curl`. It would be a different judgement in a
+/// server that fetched `jku` on someone else's behalf; this one does not.
 fn fetch_key(url: &str, kid: &str) -> Result<Value> {
     if !url.starts_with("https://") {
         return Err(Error::msg(format!("`jku` {url} is not an HTTPS URL")));
@@ -180,12 +206,25 @@ fn fetch_key(url: &str, kid: &str) -> Result<Value> {
         )));
     }
 
-    let body = response.text()?;
-    if body.len() > 256 * 1024 {
+    // Bounded while reading, not after. A hostile card can name a URL that
+    // streams without end, and buffering it in order to measure it is the
+    // attack rather than the defence against it.
+    const MAX: u64 = 256 * 1024;
+    if response.content_length().is_some_and(|len| len > MAX) {
+        return Err(Error::msg(format!(
+            "`jku` {url} declares more than 256 KiB"
+        )));
+    }
+
+    let mut buffer = Vec::new();
+    std::io::copy(&mut std::io::Read::take(response, MAX + 1), &mut buffer)?;
+    if buffer.len() as u64 > MAX {
         return Err(Error::msg(format!(
             "`jku` {url} returned more than 256 KiB"
         )));
     }
+    let body = String::from_utf8(buffer)
+        .map_err(|_| Error::msg(format!("`jku` {url} did not return text")))?;
 
     let jwks: Value = serde_json::from_str(&body)?;
     jwks["keys"]
@@ -251,6 +290,36 @@ mod tests {
                 .as_ref()
                 .unwrap_err()
                 .contains("no key available")
+        );
+    }
+
+    /// `--jwks` asks "was this signed by a key I hold?". Answering it by
+    /// fetching the key the card names answers a different question — and the
+    /// old code did that silently, then exited zero, so a card signed by an
+    /// attacker passed a check the operator had scoped to their own keys.
+    #[test]
+    fn an_anchor_is_not_a_hint_to_fall_back_from() {
+        let attacker = PrivateKey::generate();
+        let unrelated = PrivateKey::generate();
+        let card = card::sign(
+            &card::scaffold("A", "https://a.example/x"),
+            &[&attacker],
+            Some("https://attacker.example/jwks.json"),
+        )
+        .unwrap();
+
+        // The anchor holds a key that signed nothing here.
+        let report = verify(&card, &trusted(&unrelated)).unwrap();
+        assert!(!report.any_verified());
+        assert!(!report.verified_against_trusted_key());
+        assert!(
+            report.signatures[0]
+                .outcome
+                .as_ref()
+                .unwrap_err()
+                .contains("not consulted"),
+            "{:?}",
+            report.signatures[0].outcome
         );
     }
 

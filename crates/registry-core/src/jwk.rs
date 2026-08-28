@@ -47,6 +47,15 @@ impl Alg {
 /// The smallest RSA modulus accepted, in bits (`SPEC.md` §5.5).
 pub const MIN_RSA_BITS: usize = 2048;
 
+/// The largest RSA modulus this registry will accept.
+///
+/// The `rsa` crate refuses to construct a key above 4096 bits, so this is not a
+/// policy choice so much as making an existing limit legible: without it the
+/// refusal arrived at verification time, blaming the key's validity rather than
+/// its size, after an identifier had already been derived from it — and told to
+/// people.
+pub const MAX_RSA_BITS: usize = 4096;
+
 /// JWK members that carry private or symmetric key material. A publisher who
 /// pastes the wrong file must be refused, not published.
 const PRIVATE_MEMBERS: &[&str] = &["d", "p", "q", "dp", "dq", "qi", "oth", "k"];
@@ -73,7 +82,7 @@ impl Jwk {
     pub fn parse(value: &Value) -> Result<Self> {
         let obj = value
             .as_object()
-            .ok_or_else(|| RegistryError::new(Code::CardInvalid, "a JWK must be a JSON object"))?;
+            .ok_or_else(|| RegistryError::new(Code::KeyInvalid, "a JWK must be a JSON object"))?;
 
         for member in PRIVATE_MEMBERS {
             if obj.contains_key(*member) {
@@ -112,11 +121,53 @@ impl Jwk {
             "RSA" => {
                 let n = decode(member_str(obj, "n")?, "n")?;
                 let e = decode(member_str(obj, "e")?, "e")?;
-                let bits = n.len() * 8 - n.first().map_or(0, |b| b.leading_zeros() as usize);
+                // RFC 7518 §6.3.1.1 requires the minimal big-endian octet
+                // sequence: no leading zero byte. Accepting padding would let
+                // one key present many encodings — many thumbprints, so many
+                // `agentId`s for one holder — and would let a modulus be padded
+                // up to whatever apparent size clears the floor below. Measuring
+                // the stripped value alone is not enough: the padded bytes would
+                // still be what the registry stores and republishes, so a
+                // consumer measuring the served JWKS would read the wrong size.
+                // Empty is not merely too small: `n.len() * 8 - leading_zeros`
+                // underflows on it, which panics under overflow checks and
+                // wraps past the size floor without them. Key parsing happens
+                // before any signature or authorization check, so an anonymous
+                // caller reaches this line.
+                if n.is_empty() || e.is_empty() {
+                    return Err(RegistryError::new(
+                        Code::KeyInvalid,
+                        "RSA `n` and `e` must not be empty",
+                    ));
+                }
+                if n.first() == Some(&0) {
+                    return Err(RegistryError::new(
+                        Code::KeyInvalid,
+                        "RSA modulus `n` has a leading zero byte; RFC 7518 requires the minimal encoding",
+                    ));
+                }
+                if e.first() == Some(&0) {
+                    return Err(RegistryError::new(
+                        Code::KeyInvalid,
+                        "RSA exponent `e` has a leading zero byte; RFC 7518 requires the minimal encoding",
+                    ));
+                }
+                let bits = n.len() * 8 - n.first().map_or(8, |b| b.leading_zeros() as usize);
                 if bits < MIN_RSA_BITS {
                     return Err(RegistryError::new(
                         Code::AlgNotAllowed,
                         format!("RSA modulus is {bits} bits; the minimum is {MIN_RSA_BITS}"),
+                    ));
+                }
+                // The verifier refuses anything above this, so a key over it
+                // parses, yields a thumbprint — and therefore an `agentId` a
+                // publisher may already have derived and told people about —
+                // and can then never sign anything. Refusing at parse means
+                // the answer names the reason.
+                if bits > MAX_RSA_BITS {
+                    return Err(RegistryError::new(
+                        Code::AlgNotAllowed,
+                        format!("RSA modulus is {bits} bits; the maximum is {MAX_RSA_BITS}"),
                     ));
                 }
                 KeyKind::Rsa { n, e }
@@ -144,9 +195,42 @@ impl Jwk {
         &self.thumbprint
     }
 
-    /// The submitted JSON, for serving in a JWKS document.
-    pub fn as_value(&self) -> &Value {
+    /// The submitted JSON, exactly as received.
+    ///
+    /// Only for diagnostics. Never publish this: see [`Self::to_public`].
+    pub fn as_submitted(&self) -> &Value {
         &self.value
+    }
+
+    /// The key as this registry will publish it.
+    ///
+    /// Rebuilt from the verified key material rather than passed through, and
+    /// carrying only members this code checked: the RFC 7638 required set, the
+    /// `kid` computed from it, and `use`. A submitted JWK may carry anything —
+    /// a `kid` naming a different key, an `alg` this registry does not accept —
+    /// and republishing that would mean vouching for values nobody validated,
+    /// in the one document consumers are meant to trust.
+    ///
+    /// `kid` is required by §7.2 and is what makes the `jku` story work: a
+    /// generic RFC 7515 verifier selects the key whose `kid` matches the
+    /// signature's, and finds nothing if the registry omits it. Adding it does
+    /// not disturb the thumbprint, which is computed over the required members
+    /// alone.
+    pub fn to_public(&self) -> Value {
+        let mut jwk = match &self.kind {
+            KeyKind::P256 { x, y } => json!({
+                "crv": "P-256", "kty": "EC", "x": b64url(x), "y": b64url(y),
+            }),
+            KeyKind::Ed25519 { x } => json!({
+                "crv": "Ed25519", "kty": "OKP", "x": b64url(x),
+            }),
+            KeyKind::Rsa { n, e } => json!({
+                "e": b64url(e), "kty": "RSA", "n": b64url(n),
+            }),
+        };
+        jwk["kid"] = json!(self.thumbprint);
+        jwk["use"] = json!("sig");
+        jwk
     }
 
     /// Whether this key type can be used with the given algorithm. Checking
@@ -209,7 +293,7 @@ fn compute_thumbprint(kind: &KeyKind) -> Result<String> {
 fn member_str<'a>(obj: &'a serde_json::Map<String, Value>, name: &str) -> Result<&'a str> {
     obj.get(name).and_then(Value::as_str).ok_or_else(|| {
         RegistryError::new(
-            Code::CardInvalid,
+            Code::KeyInvalid,
             format!("JWK member {name:?} is absent or not a string"),
         )
     })
@@ -218,7 +302,7 @@ fn member_str<'a>(obj: &'a serde_json::Map<String, Value>, name: &str) -> Result
 fn decode(s: &str, name: &str) -> Result<Vec<u8>> {
     b64url_decode(s).map_err(|_| {
         RegistryError::new(
-            Code::CardInvalid,
+            Code::KeyInvalid,
             format!("JWK member {name:?} is not unpadded base64url"),
         )
     })
@@ -228,7 +312,7 @@ fn fixed(s: &str, len: usize, name: &str) -> Result<Vec<u8>> {
     let v = decode(s, name)?;
     if v.len() != len {
         return Err(RegistryError::new(
-            Code::CardInvalid,
+            Code::KeyInvalid,
             format!("JWK member {name:?} is {} bytes; {len} expected", v.len()),
         ));
     }

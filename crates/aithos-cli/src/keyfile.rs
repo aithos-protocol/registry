@@ -28,6 +28,14 @@ use crate::error::{Error, Result};
 /// number rises.
 const ITERATIONS: u32 = 600_000;
 
+/// The most iterations this will perform on a file's say-so.
+///
+/// The header is only authenticated after the derivation runs — that is how
+/// PBES2 works — so a file claiming four billion iterations would hang for
+/// hours before anything could tell you it had been tampered with. Generous
+/// against the current cost, and finite.
+const MAX_ITERATIONS: u64 = 10_000_000;
+
 const ALG: &str = "PBES2-HS256+A128KW";
 const ENC: &str = "A256GCM";
 
@@ -65,10 +73,17 @@ pub fn key_path(kid: &str) -> Result<PathBuf> {
 /// A signing key held in memory.
 ///
 /// The secret lives only inside `SigningKey`, which zeroizes itself on drop.
-/// An earlier version also kept it as a string inside a JWK and claimed to wipe
-/// that too — which it could not, since a `serde_json` string offers no way to
-/// reach its buffer. Not making the copy is the only version of that promise
-/// worth stating.
+/// An earlier version also kept it *persistently* as a string inside a JWK and
+/// claimed to wipe that too — which it could not, since a `serde_json` string
+/// offers no way to reach its buffer.
+///
+/// What that does **not** claim: loading an encrypted key file decodes it into
+/// a `serde_json::Value` on the way here, so the private scalar exists briefly
+/// in a `String` this code cannot zeroize, as do the plaintext buffer and the
+/// derived key-encryption key. Honouring the promise across that boundary would
+/// mean a hand-rolled JWK decoder over a byte buffer. The property that holds is
+/// narrower and worth stating precisely: nothing that *outlives the load* holds
+/// a copy of the secret except the type that wipes itself.
 pub struct PrivateKey {
     signing: p256::ecdsa::SigningKey,
 }
@@ -100,7 +115,12 @@ impl PrivateKey {
 
     /// The public half: what a registry is given, and what the thumbprint is
     /// computed over.
-    pub fn public_jwk(&self) -> Value {
+    /// Only the members RFC 7638 hashes.
+    ///
+    /// Kept separate from [`Self::public_jwk`] because the thumbprint is
+    /// computed from this, and a `public_jwk` that carried the thumbprint while
+    /// the thumbprint was computed from `public_jwk` recurses forever.
+    fn bare_jwk(&self) -> Value {
         let point = self.signing.verifying_key().to_encoded_point(false);
         json!({
             "kty": "EC",
@@ -110,15 +130,28 @@ impl PrivateKey {
         })
     }
 
+    pub fn public_jwk(&self) -> Value {
+        let mut jwk = self.bare_jwk();
+        // A JWKS entry without a `kid` cannot be selected by a generic RFC 7515
+        // verifier following `jku`, which is the whole interoperability story.
+        // A registry rebuilds what it publishes rather than trusting this, but
+        // a key handed to anything else should still describe itself.
+        if let Ok(kid) = self.kid() {
+            jwk["kid"] = json!(kid);
+            jwk["use"] = json!("sig");
+        }
+        jwk
+    }
+
     /// The full JWK, built only when something is about to write it.
     fn private_jwk(&self) -> Value {
-        let mut jwk = self.public_jwk();
+        let mut jwk = self.bare_jwk();
         jwk["d"] = json!(b64url(&self.signing.to_bytes()));
         jwk
     }
 
     pub fn kid(&self) -> Result<String> {
-        Ok(registry_core::Jwk::parse(&self.public_jwk())
+        Ok(registry_core::Jwk::parse(&self.bare_jwk())
             .map_err(|e| Error::msg(e.to_string()))?
             .thumbprint()
             .to_string())
@@ -136,19 +169,24 @@ impl PrivateKey {
             fs::create_dir_all(parent)?;
             restrict(parent, 0o700)?;
         }
-        if path.exists() {
-            return Err(Error::msg(format!(
-                "{} already exists; a key file is never overwritten",
-                path.display()
-            )));
-        }
-
         let contents = match passphrase {
             Some(passphrase) => encrypt(&self.private_jwk(), passphrase)?,
             None => serde_json::to_string_pretty(&self.private_jwk())? + "\n",
         };
-        fs::write(path, contents)?;
-        restrict(path, 0o600)
+
+        // Created at 0600, not created and then chmodded. With `--no-passphrase`
+        // the file is plaintext private key material, and the window between
+        // `write` and `chmod` is a window in which it sits at whatever the
+        // umask allows — usually world-readable. `create_new` also replaces the
+        // `path.exists()` check it used to do: asking and then acting is a race,
+        // where refusing to create an existing file is one operation.
+        write_new(path, contents.as_bytes()).map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => Error::msg(format!(
+                "{} already exists; a key file is never overwritten",
+                path.display()
+            )),
+            _ => Error::msg(format!("{}: {e}", path.display())),
+        })
     }
 
     /// Read a key, prompting for a passphrase only if the file is encrypted.
@@ -168,6 +206,30 @@ impl PrivateKey {
         let raw = fs::read_to_string(path)?;
         Ok(!raw.trim_start().starts_with('{'))
     }
+}
+
+/// Create a file that must not already exist, readable only by its owner.
+#[cfg(unix)]
+fn write_new(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
+    file.write_all(contents)
+}
+
+#[cfg(not(unix))]
+fn write_new(path: &Path, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    file.write_all(contents)
 }
 
 #[cfg(unix)]
@@ -266,7 +328,15 @@ fn decrypt(compact: &str, passphrase: &str) -> Result<Value> {
         .map_err(|_| Error::msg("malformed salt"))?;
     let iterations = header["p2c"]
         .as_u64()
-        .ok_or_else(|| Error::msg("malformed iteration count"))? as u32;
+        .ok_or_else(|| Error::msg("malformed iteration count"))?;
+    if iterations == 0 || iterations > MAX_ITERATIONS {
+        return Err(Error::msg(format!(
+            "the key file asks for {iterations} iterations; this refuses anything above \
+             {MAX_ITERATIONS}, since the header cannot be authenticated until the derivation \
+             has already run"
+        )));
+    }
+    let iterations = iterations as u32;
 
     let decode = |part: &str| b64url_decode(part).map_err(|_| Error::msg("malformed key file"));
     let (wrapped, iv, ciphertext, tag) = (
@@ -280,6 +350,16 @@ fn decrypt(compact: &str, passphrase: &str) -> Result<Value> {
     let mut cek = [0u8; 32];
     kek.unwrap(&wrapped, &mut cek)
         .map_err(|_| Error::msg("wrong passphrase"))?;
+
+    // `Nonce::from_slice` asserts on length rather than returning an error, so a
+    // truncated `iv` — disk corruption, or anyone who can write but not read the
+    // key file — panicked with a backtrace instead of reaching the "has been
+    // altered" message three lines below. Every other segment's length is
+    // checked by the primitive that consumes it; this one was not.
+    if iv.len() != 12 {
+        cek.zeroize();
+        return Err(Error::msg("the key file has been altered"));
+    }
 
     let mut sealed = ciphertext;
     sealed.extend_from_slice(&tag);
@@ -338,6 +418,22 @@ mod tests {
         assert_eq!(public["kty"], json!("EC"));
         // The thumbprint is computed over the public half alone.
         assert_eq!(key.kid().unwrap().len(), 43);
+    }
+
+    /// The thumbprint is computed from the bare members, and the published form
+    /// carries it. Deriving one from the other in both directions recurses.
+    #[test]
+    fn the_published_form_carries_the_thumbprint_without_recursing() {
+        let key = PrivateKey::generate();
+        let public = key.public_jwk();
+        assert_eq!(public["kid"], json!(key.kid().unwrap()));
+        assert_eq!(public["use"], json!("sig"));
+        assert!(public.get("d").is_none());
+        // Parsing the published form back yields the same identity.
+        assert_eq!(
+            registry_core::Jwk::parse(&public).unwrap().thumbprint(),
+            key.kid().unwrap()
+        );
     }
 
     #[test]

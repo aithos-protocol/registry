@@ -19,9 +19,13 @@ axum = "0.8"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 async-trait = "0.1"
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
-aws-config = "1"
-aws-sdk-dynamodb = "1"
-aws-sdk-s3 = "1"
+# `default-features = false` drops the SDK's legacy hyper-0.14 connector, which
+# is what pulls in the unmaintained rustls 0.21 / h2 0.3 stack. The modern
+# client (`default-https-client`, rustls + aws-lc) is the one actually used, and
+# `cargo deny` is what made the difference visible.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rt-tokio", "default-https-client", "sso", "credentials-process"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
 lambda_http = "1"
 lambda_runtime = "1"
 tracing = "0.1"

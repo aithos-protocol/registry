@@ -96,6 +96,40 @@ impl<'de> Visitor<'de> for StrictVisitor {
                 "non-finite numbers are outside the I-JSON domain",
             ));
         }
+        // An integer literal too large for `u64` never reaches `visit_u64` — it
+        // arrives here, already a double, and so escaped the range check that
+        // every smaller integer gets. serde_json does not hand over the original
+        // token, so the literal `10000000000000000000000` and the literal `1e22`
+        // are the same value by the time this sees them.
+        //
+        // Both are refused. The first is what §5.1 forbids; the second is
+        // legal I-JSON but indistinguishable from it here, and a card carrying
+        // an integral magnitude above 2^53 is either lossy or a number no agent
+        // card has any business holding. Over-refusing in that corner is the
+        // safe direction: it rejects a document, where under-refusing accepts
+        // one whose value silently changed.
+        if n.fract() == 0.0 && n.abs() > MAX_SAFE_INTEGER as f64 {
+            return Err(E::custom(format!(
+                "integral value {n:?} is outside the I-JSON safe range (±{MAX_SAFE_INTEGER})"
+            )));
+        }
+        // The symmetric case at the small end. A subnormal has lost precision
+        // before anything here sees it, so it is refused.
+        //
+        // What this cannot catch: a literal small enough to underflow all the
+        // way to zero, such as `1e-400`. serde_json hands over the `f64`, not
+        // the token, so by the time this runs it is indistinguishable from a
+        // plainly written `0.0` — and refusing every float zero would reject a
+        // legal, ordinary value. The consequence is bounded and worth stating:
+        // such a literal is canonicalized to `0`, so the published document is
+        // not the one written. It is *not* a signature problem — a publisher and
+        // a verifier canonicalize through the same rule and agree — which is why
+        // this is left rather than solved with a hand-rolled number parser.
+        if n != 0.0 && n.abs() < f64::MIN_POSITIVE {
+            return Err(E::custom(format!(
+                "number {n:?} is subnormal and outside the I-JSON domain"
+            )));
+        }
         Ok(StrictValue(Value::from(n)))
     }
 

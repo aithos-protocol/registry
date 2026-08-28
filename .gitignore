@@ -10,3 +10,6 @@ target/
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# Staging for files the mount will not let us delete.
+_to_delete/

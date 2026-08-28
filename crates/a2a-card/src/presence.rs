@@ -9,17 +9,54 @@ use serde_json::Value;
 use crate::error::{Code, Issue};
 use crate::schema::{AGENT_CARD, Behavior, Field, Msg, Ty};
 
-/// Validate a value against the pinned `AgentCard` schema.
+/// The most issues one validation will collect.
 ///
-/// Returns every issue found, not just the first, so a publishing UI can show
-/// a complete list.
-pub fn validate_card(v: &Value) -> Vec<Issue> {
-    let mut issues = Vec::new();
-    validate_msg(v, &AGENT_CARD, "", &mut issues);
-    issues
+/// A complete list helps someone fixing a card by hand; an unbounded one is an
+/// amplifier, since a caller controls how many problems a document contains and
+/// each costs two heap allocations. Nobody reads the fiftieth.
+pub const MAX_ISSUES: usize = 50;
+
+/// A bounded sink for issues.
+///
+/// The bound used to be a `if issues.len() >= MAX_ISSUES` guard repeated at the
+/// call sites that were thought to matter, and two loops did not have one: a
+/// half-megabyte document of unknown members still produced tens of thousands
+/// of issues. Making the *container* refuse to grow removes the possibility of
+/// forgetting, which is the only version of this bound that stays true as the
+/// schema walker changes.
+#[derive(Default)]
+struct Issues {
+    items: Vec<Issue>,
 }
 
-fn validate_msg(v: &Value, msg: &Msg, ptr: &str, issues: &mut Vec<Issue>) {
+impl Issues {
+    fn push(&mut self, issue: Issue) {
+        if self.items.len() < MAX_ISSUES {
+            self.items.push(issue);
+        }
+    }
+
+    /// Whether the cap is reached. Callers use it to stop *walking*, not merely
+    /// to stop recording: the walk itself is the cost being bounded.
+    fn is_full(&self) -> bool {
+        self.items.len() >= MAX_ISSUES
+    }
+}
+
+/// Validate a value against the pinned `AgentCard` schema.
+///
+/// Returns up to [`MAX_ISSUES`] issues rather than only the first, so a
+/// publishing interface can show a usable list.
+pub fn validate_card(v: &Value) -> Vec<Issue> {
+    let mut issues = Issues::default();
+    validate_msg(v, &AGENT_CARD, "", &mut issues);
+    issues.items
+}
+
+fn validate_msg(v: &Value, msg: &Msg, ptr: &str, issues: &mut Issues) {
+    if issues.is_full() {
+        return;
+    }
     let Some(obj) = v.as_object() else {
         issues.push(Issue::new(
             Code::CardInvalid,
@@ -30,6 +67,9 @@ fn validate_msg(v: &Value, msg: &Msg, ptr: &str, issues: &mut Vec<Issue>) {
     };
 
     for key in obj.keys() {
+        if issues.is_full() {
+            return;
+        }
         if !msg.fields.iter().any(|f| f.name == *key) {
             issues.push(Issue::new(
                 Code::CardInvalid,
@@ -56,6 +96,9 @@ fn validate_msg(v: &Value, msg: &Msg, ptr: &str, issues: &mut Vec<Issue>) {
     }
 
     for field in msg.fields {
+        if issues.is_full() {
+            return;
+        }
         let p = child(ptr, field.name);
         match obj.get(field.name) {
             None => {
@@ -75,7 +118,7 @@ fn validate_msg(v: &Value, msg: &Msg, ptr: &str, issues: &mut Vec<Issue>) {
     }
 }
 
-fn check_presence(field: &Field, value: &Value, ptr: &str, issues: &mut Vec<Issue>) {
+fn check_presence(field: &Field, value: &Value, ptr: &str, issues: &mut Issues) {
     // Required and `optional` fields may carry their default value.
     // Implicit-presence fields may not, unless they are message-typed, where
     // presence is tracked independently of content.
@@ -103,7 +146,7 @@ fn is_default(v: &Value, ty: &Ty) -> bool {
     }
 }
 
-fn validate_ty(v: &Value, ty: &Ty, ptr: &str, issues: &mut Vec<Issue>) {
+fn validate_ty(v: &Value, ty: &Ty, ptr: &str, issues: &mut Issues) {
     match ty {
         Ty::Str => {
             if !v.is_string() {
@@ -125,6 +168,9 @@ fn validate_ty(v: &Value, ty: &Ty, ptr: &str, issues: &mut Vec<Issue>) {
             None => issues.push(Issue::new(Code::CardInvalid, ptr, "expected an array")),
             Some(items) => {
                 for (i, item) in items.iter().enumerate() {
+                    if issues.is_full() {
+                        return;
+                    }
                     validate_ty(item, inner, &format!("{ptr}/{i}"), issues);
                 }
             }
@@ -133,6 +179,9 @@ fn validate_ty(v: &Value, ty: &Ty, ptr: &str, issues: &mut Vec<Issue>) {
             None => issues.push(Issue::new(Code::CardInvalid, ptr, "expected an object")),
             Some(entries) => {
                 for (k, item) in entries {
+                    if issues.is_full() {
+                        return;
+                    }
                     validate_ty(item, inner, &child(ptr, k), issues);
                 }
             }

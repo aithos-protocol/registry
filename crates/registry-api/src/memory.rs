@@ -131,14 +131,24 @@ impl Store for MemoryStore {
             None => 0,
             Some(raw) => {
                 let seq: u64 = raw.parse().map_err(|_| StoreError::BadCursor)?;
+                // A cursor the backend does not recognise is a bad cursor, not
+                // page one. Restarting silently is how a client paginating over
+                // a register that is being written to loops forever.
                 versions
                     .iter()
                     .position(|v| v.seq == seq)
-                    .map_or(0, |i| i + 1)
+                    .map(|i| i + 1)
+                    .ok_or(StoreError::BadCursor)?
             }
         };
         let items: Vec<VersionRecord> = versions.iter().skip(start).take(limit).cloned().collect();
-        let next_cursor = (start + items.len() < versions.len())
+        // A cursor whenever the page filled, not only when more is known to
+        // remain. That is what the deployed backend does — DynamoDB returns a
+        // `LastEvaluatedKey` whenever the limit was reached, including on the
+        // last item — and two backends behind one contract must not differ in a
+        // way that only the untested one exhibits. §7.4 says how a client ends
+        // a listing: on an empty page, not on a missing cursor.
+        let next_cursor = (items.len() == limit)
             .then(|| items.last().map(|v| v.seq.to_string()))
             .flatten();
         Ok(Page { items, next_cursor })
@@ -166,20 +176,30 @@ impl Store for MemoryStore {
         let mut all: Vec<AgentRecord> = inner.agents.values().cloned().collect();
         // Newest-updated first, with the identifier breaking ties so that the
         // order is total and a cursor cannot skip or repeat an entry.
+        //
+        // The tie-break descends, because the deployed backend sorts the
+        // composite `{updatedAt}#{agentId}` in reverse and there is no way for
+        // it to descend on one half and ascend on the other. §7.4 does not pin
+        // the tie-break, but the two backends behind one contract must not
+        // differ — and this is the store every HTTP test runs against, so a
+        // disagreement here means the ordering that ships is the one nothing
+        // exercises.
         all.sort_by(|a, b| {
             b.updated_at
                 .cmp(&a.updated_at)
-                .then_with(|| a.agent_id.cmp(&b.agent_id))
+                .then_with(|| b.agent_id.cmp(&a.agent_id))
         });
         let start = match cursor {
             None => 0,
             Some(c) => all
                 .iter()
                 .position(|a| a.agent_id == c)
-                .map_or(0, |i| i + 1),
+                .map(|i| i + 1)
+                .ok_or(StoreError::BadCursor)?,
         };
         let items: Vec<AgentRecord> = all.iter().skip(start).take(limit).cloned().collect();
-        let next_cursor = (start + items.len() < all.len())
+        // Same rule as the version listing above, for the same reason.
+        let next_cursor = (items.len() == limit)
             .then(|| items.last().map(|a| a.agent_id.clone()))
             .flatten();
         Ok(Page { items, next_cursor })

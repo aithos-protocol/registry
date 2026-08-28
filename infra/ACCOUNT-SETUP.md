@@ -88,14 +88,24 @@ principal, granting only:
 
 ```
 s3, dynamodb, lambda, apigateway, cloudfront, acm,
-logs, cloudwatch, iam, sts, tag, route53
+logs, cloudwatch, events, iam, sts, tag, route53,
+wafv2, sqs, sns, budgets
 ```
+
+The second line is what the guardrails and the reconciliation path need:
+`wafv2` for the rate rules, `sqs` for the reconciler's failure destination,
+`sns` for the alarm topic, `events` for the sweep schedule, `budgets` for the
+spend alarm. A first apply into an account missing any of them fails partway.
 
 `AdministratorAccess` will work and is tempting, but the IAM permissions are
 the ones that matter. Constrain them: allow `iam:CreateRole`, `iam:PutRolePolicy`
-and friends **only for roles under the path `/registry/`**, and attach a
-permissions boundary so a role created by Terraform can never grant itself more
-than the stack needs. This is cheap now and unpleasant to retrofit.
+and friends **only for roles under the path `/registry/`**. This is cheap now
+and unpleasant to retrofit.
+
+Do **not** require a permissions boundary on those roles unless you also set
+`permissions_boundary` on every `aws_iam_role` in `compute.tf`: a boundary
+demanded by the permission set and not supplied by the configuration makes
+`iam:CreateRole` fail, and the stack cannot be applied at all.
 
 Then configure a local named profile with `aws configure sso`:
 

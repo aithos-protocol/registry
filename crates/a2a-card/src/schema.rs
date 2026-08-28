@@ -322,3 +322,101 @@ static DEVICE_CODE_FLOW: Msg = Msg {
         req("scopes", Ty::Map(&Ty::Str)),
     ],
 };
+
+// --- identifying the table -----------------------------------------------
+
+/// A digest over the presence table itself.
+///
+/// A2A pins a protocol commit; it does not publish the presence table derived
+/// from it, because the table only exists once someone applies §8.4.1's rules
+/// to the proto by hand — which is what this module is. Two implementations
+/// that read the same commit can still disagree about a single field's
+/// behaviour, and that disagreement produces two different canonical documents
+/// and so two different signatures over what looks like the same card.
+///
+/// Publishing this digest is what turns "we pinned the same commit" into
+/// something checkable. It is computed from the table's own contents, so it
+/// cannot drift from the table it names.
+pub fn table_digest() -> &'static str {
+    use std::sync::OnceLock;
+    static DIGEST: OnceLock<String> = OnceLock::new();
+    DIGEST.get_or_init(|| {
+        let mut out = String::new();
+        render_msg(&AGENT_CARD, &mut out, &mut Vec::new());
+        format!("sha256:{:x}", <sha2::Sha256 as sha2::Digest>::digest(out))
+    })
+}
+
+/// Render one message deterministically. `seen` breaks the recursion on the
+/// mutually referential parts of the schema; a message already rendered
+/// contributes its name alone.
+fn render_msg(msg: &'static Msg, out: &mut String, seen: &mut Vec<&'static str>) {
+    if seen.contains(&msg.name) {
+        out.push_str(msg.name);
+        out.push_str(";\n");
+        return;
+    }
+    seen.push(msg.name);
+
+    out.push_str(msg.name);
+    if msg.is_oneof {
+        out.push_str("|oneof");
+    }
+    out.push_str("{\n");
+    for field in msg.fields {
+        out.push_str("  ");
+        out.push_str(field.name);
+        out.push(':');
+        out.push_str(match field.behavior {
+            Behavior::Required => "required",
+            Behavior::Optional => "optional",
+            Behavior::Implicit => "implicit",
+        });
+        out.push(' ');
+        render_ty(&field.ty, out, seen);
+        out.push('\n');
+    }
+    out.push_str("}\n");
+}
+
+fn render_ty(ty: &'static Ty, out: &mut String, seen: &mut Vec<&'static str>) {
+    match ty {
+        Ty::Str => out.push_str("string"),
+        Ty::Bool => out.push_str("bool"),
+        Ty::Struct => out.push_str("struct"),
+        Ty::Msg(m) => render_msg(m, out, seen),
+        Ty::Repeated(inner) => {
+            out.push_str("repeated<");
+            render_ty(inner, out, seen);
+            out.push('>');
+        }
+        Ty::Map(inner) => {
+            out.push_str("map<");
+            render_ty(inner, out, seen);
+            out.push('>');
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The digest is a published interoperability fact. If this test fails, the
+    /// table changed — which is legitimate when the pinned A2A commit moves, and
+    /// a bug otherwise. Either way it must be a deliberate edit, not a surprise.
+    /// The digest is a published interoperability fact, so it is pinned here as
+    /// a literal. Asserting only that it equals itself made the doc comment
+    /// above false: an accidental edit to the presence table would change every
+    /// card's canonical form and the digest the manifest serves, with a green
+    /// suite. If this fails, either the pinned A2A commit moved — in which case
+    /// update the literal deliberately, in the same commit as the table — or
+    /// the table was changed by accident.
+    #[test]
+    fn the_table_digest_is_pinned() {
+        assert_eq!(table_digest(), EXPECTED);
+    }
+
+    const EXPECTED: &str =
+        "sha256:cc3191a655d53847bed8f0afcb8138932daea9184a20ee2420e49287b39c9b84";
+}
