@@ -88,7 +88,7 @@ moves.
 cargo test           # 100 tests, none of which touch a network
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
-cargo build -p a2a-card --target wasm32-unknown-unknown
+cargo build -p aithos-a2a-card --target wasm32-unknown-unknown
 ```
 
 The suite verifies against published vectors wherever one exists: the official

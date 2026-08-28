@@ -33,7 +33,7 @@ jobs:
       - name: Check that a2a-card still builds for the browser
         run: |
           rustup target add wasm32-unknown-unknown
-          cargo build -p a2a-card --target wasm32-unknown-unknown
+          cargo build -p aithos-a2a-card --target wasm32-unknown-unknown
 
   audit:
     runs-on: ubuntu-latest
