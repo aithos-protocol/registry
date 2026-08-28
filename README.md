@@ -122,8 +122,20 @@ cargo install --path crates/aithos-cli     # installs `aithos`
 aithos key new                             # its thumbprint is your entry's address
 aithos card init                           # a card that already passes the strict profile
 aithos publish agent-card.json --key <kid> --bump patch
-aithos verify <agent-id>
+aithos verify <agent-id>                   # is this document intact, and who signed it?
+aithos whatis <agent-id>                   # what does the registry hold at this address?
+aithos withdraw <agent-id> --key <kid>     # permanent; the address is never reusable
 ```
+
+`whatis` is `whois` for an agent address, and the analogy holds in both
+directions. It reports registration facts — when the address was first
+published, who may change it now, how many versions it has, whether the current
+card verifies — and it reports nothing about whether the thing at that address
+is honest. Its output keeps those apart on purpose: the card's `name`,
+`description` and declared endpoints sit under a heading that says nobody
+checked them, because a lookup tool that printed a self-declared organisation
+beside a green tick would be a phishing instrument with this registry's name on
+it.
 
 `verify` is the reason the rest exists. Publishing is rare — a few people, a few
 times a year. Verifying is what every consumer of an agent does, and until now

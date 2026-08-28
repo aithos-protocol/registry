@@ -90,6 +90,12 @@ enum Command {
         yes: bool,
     },
 
+    /// Look up what a registry holds at an address, the way `whois` does.
+    Whatis {
+        /// An agent identifier.
+        agent: String,
+    },
+
     /// Check a published card, or a file, against its signatures.
     Verify {
         /// An agent identifier, a URL, or a path to a card file.
@@ -184,6 +190,10 @@ fn run() -> Result<()> {
         Command::Withdraw { agent, key, yes } => {
             check_registry(&registry)?;
             withdraw(&registry, &agent, &key, yes)
+        }
+        Command::Whatis { agent } => {
+            check_registry(&registry)?;
+            whatis(&registry, &agent)
         }
         Command::Verify { target, jwks } => run_verify(&registry, &target, jwks.as_deref()),
     }
@@ -570,6 +580,127 @@ fn withdraw(registry: &str, agent_id: &str, key_name: &str, yes: bool) -> Result
     println!("withdrawn");
     println!("         history stays readable at {registry}/v1/agents/{agent_id}/versions");
     Ok(())
+}
+
+// --- whatis --------------------------------------------------------------
+
+/// What a registry holds at one address.
+///
+/// The `whois` analogy is the right one, and it is worth taking seriously in
+/// both directions. `whois` reports registration facts — when a name was
+/// registered, who may change it, whether it is still active — and it reports
+/// nothing about whether the thing at that name is honest. This is the same
+/// shape, and the same limit.
+///
+/// So the output separates two kinds of statement, and the separation is
+/// visible rather than documented. Above the line are facts the registry
+/// establishes: the address, its status, its lineage, whether the current card
+/// verifies. Below it is whatever the key holder wrote in their card, which
+/// nobody checked and which a reader must not take as identity. A lookup tool
+/// that printed a self-declared organisation name beside a green tick would be
+/// a phishing instrument with this registry's name on it (`SPEC.md` §10).
+fn whatis(registry: &str, agent_id: &str) -> Result<()> {
+    let record = fetch_record(registry, agent_id)?
+        .ok_or_else(|| Error::msg(format!("{registry} holds no entry {agent_id}")))?;
+
+    let field = |name: &str| record[name].as_str().unwrap_or("?").to_string();
+    let status = field("status");
+    let withdrawn = status == "WITHDRAWN";
+
+    println!("address    {agent_id}");
+    println!("status     {status}");
+    println!("registry   {registry}");
+    println!();
+
+    println!("registered {}", field("createdAt"));
+    println!("updated    {}", field("updatedAt"));
+    let versions = version_count(registry, agent_id).unwrap_or(0);
+    println!(
+        "versions   {versions}, current {} (sequence {})",
+        field("cardVersion"),
+        record["seq"].as_u64().unwrap_or(0)
+    );
+
+    // The set of keys that may change this entry — the part of a `whois`
+    // answer that actually matters, and the only identity claim made here.
+    let authorized: Vec<&str> = record["authorizedKids"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    for (i, kid) in authorized.iter().enumerate() {
+        println!("{} {kid}", if i == 0 { "keys      " } else { "          " });
+    }
+    println!();
+
+    if withdrawn {
+        println!("This entry was withdrawn by its key holder. Its card and its key set");
+        println!("are no longer served, and the address can never be reused. Every");
+        println!("version it published stays readable at its own digest.");
+        return Ok(());
+    }
+
+    // Verification is the one place the tool does work rather than relaying.
+    match fetch_card(registry, agent_id) {
+        Err(e) => {
+            println!("card       not being served yet: {e}");
+            println!();
+            println!("The entry is committed. A card reaches the public read path a moment");
+            println!("later, so this resolves on its own; if it does not, the registry has");
+            println!("drifted from its own register.");
+            return Ok(());
+        }
+        Ok((card, _)) => {
+            let report = verify::verify(&card, &BTreeMap::new())?;
+            println!("card       {}", report.card_digest);
+            for signature in &report.signatures {
+                match &signature.outcome {
+                    Ok(()) => println!("signature  ok, by {} [{}]", signature.kid, signature.alg),
+                    Err(why) => println!("signature  FAILED {} — {why}", signature.kid),
+                }
+            }
+            println!();
+
+            println!("Declared by the key holder. Nobody checked any of it:");
+            println!("  name         {}", report.name);
+            if let Some(d) = card.value["description"].as_str() {
+                println!("  description  {d}");
+            }
+            if let Some(interfaces) = card.value["supportedInterfaces"].as_array() {
+                for i in interfaces {
+                    println!(
+                        "  interface    {} {}",
+                        i["protocolBinding"].as_str().unwrap_or("?"),
+                        i["url"].as_str().unwrap_or("?")
+                    );
+                }
+            }
+            if let Some(skills) = card.value["skills"].as_array() {
+                println!("  skills       {}", skills.len());
+            }
+            println!();
+        }
+    }
+
+    println!("Established: the holder of an authorized key published this card here,");
+    println!("and every version since was signed by a key that lineage authorized.");
+    println!("Not established: any domain, any organisation, and whether whoever holds");
+    println!("these keys operates the endpoints declared above.");
+    Ok(())
+}
+
+/// How many versions the entry has published. Best effort: a lookup that
+/// cannot count them is still worth printing without.
+fn version_count(registry: &str, agent_id: &str) -> Option<usize> {
+    let response = http()
+        .ok()?
+        .get(format!("{registry}/v1/agents/{agent_id}/versions"))
+        .send()
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: Value = serde_json::from_str(&response.text().ok()?).ok()?;
+    body["versions"].as_array().map(Vec::len)
 }
 
 // --- verify --------------------------------------------------------------
