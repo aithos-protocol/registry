@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly, because `cargo deny` is only as fresh as its last run: an advisory
+  # published between two pushes would otherwise wait for the next commit —
+  # which may be a month away — before anything turned red.
+  schedule:
+    - cron: "17 5 * * 1"
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,6 +53,53 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check bans licenses sources advisories
+
+  # The artifact the service actually runs. The release workflow builds and
+  # attests the CLI for five targets, but Terraform deploys
+  # `target/lambda/registry.zip` — and that zip was born on a workstation,
+  # tied to no commit. Twice now an audit has found it stale in a way an
+  # apply would have deployed backwards; this job is what makes that
+  # impossible to repeat silently. Native arm64: the runner is the target
+  # architecture, so no cross toolchain sits between the source and the
+  # artifact.
+  lambda:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      id-token: write      # to sign the provenance attestation
+      attestations: write  # to record it against this repository
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the pinned toolchain
+        run: rustup show   # honours rust-toolchain.toml
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the service for Graviton
+        run: cargo build --release --locked -p registry-lambda
+
+      - name: Package
+        run: |
+          mkdir -p target/lambda
+          cp target/release/bootstrap target/lambda/bootstrap
+          (cd target/lambda && zip -q -j registry.zip bootstrap)
+          # The same refusal build-lambda.sh makes: never let a
+          # wrong-architecture package become deployable.
+          file target/lambda/bootstrap | grep -q aarch64
+
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/lambda/registry.zip
+
+      # Ninety days: long enough that the artifact running in an environment
+      # is still downloadable when someone asks where it came from.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: registry-zip-${{ github.sha }}
+          path: target/lambda/registry.zip
+          retention-days: 90
 
   terraform:
     runs-on: ubuntu-latest

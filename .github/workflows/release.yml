@@ -48,10 +48,15 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # `rustup show` honours rust-toolchain.toml — the same 1.95.0 the CI
+      # tests and the workstation builds. The previous form installed `stable`
+      # and only built with the pin because rustup installs it on demand: an
+      # artifact whose whole job is to be checkable should not owe its
+      # toolchain to a fallback.
       - name: Install the pinned toolchain
         shell: bash
         run: |
-          rustup toolchain install --profile minimal --no-self-update stable
+          rustup show
           rustup target add ${{ matrix.target }}
 
       - name: musl linker

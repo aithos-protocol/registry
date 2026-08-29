@@ -64,7 +64,24 @@ change.
   `aithos-registry-tfstate-dev-373665157800`, versioned, encrypted, private,
   with non-current versions expiring after 90 days.
 
-## Build the Lambda package
+## Get the Lambda package
+
+Terraform deploys whatever sits at `../target/lambda/registry.zip`, with no
+opinion about where it came from — which is exactly how two audits found a
+stale zip waiting to deploy old code backwards. The rule that follows: **the
+zip must come from the commit being deployed**, and the checkable way to get
+one is the CI, which builds it on an arm64 runner and attests it on every push
+to `main`:
+
+```sh
+gh run download --repo aithos-protocol/registry \
+  -n "registry-zip-$(git rev-parse HEAD)" -D ../target/lambda
+gh attestation verify ../target/lambda/registry.zip \
+  --repo aithos-protocol/registry
+```
+
+Building locally remains possible and remains what it always was — a package
+with no provenance beyond the workstation that produced it:
 
 ```sh
 ./build-lambda.sh                     # writes ../target/lambda/registry.zip
