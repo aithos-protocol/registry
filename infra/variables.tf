@@ -77,8 +77,12 @@ variable "invocation_alarm_threshold" {
   default     = 500
 }
 
-variable "monthly_budget_eur" {
-  description = "Monthly cost ceiling for the alarm. The stack costs about a euro at rest."
+# Renamed from `monthly_budget_eur`: AWS Budgets bills this limit in USD, and a
+# variable whose name promises euros while its unit says dollars is a mistake
+# waiting for the month the exchange rate makes it matter. The stack at rest
+# runs ~8–10 a month, most of it the WAF's fixed fee.
+variable "monthly_budget" {
+  description = "Monthly cost ceiling for the alarm, in USD — the currency AWS Budgets bills in."
   type        = string
   default     = "20"
 }
@@ -87,4 +91,13 @@ variable "alarm_email" {
   description = "Address that receives alarms and budget notifications. Alarms with no subscriber are alarms nobody reads."
   type        = string
   default     = null
+
+  # Development may run with no subscriber; an environment named like
+  # production may not. An alarm topic with zero subscriptions fails silent in
+  # exactly the circumstances alarms exist for, and forgetting the -var at
+  # apply time is the easiest mistake in this file to make.
+  validation {
+    condition     = !contains(["prod", "production"], var.environment) || var.alarm_email != null
+    error_message = "A production environment must set alarm_email: alarms and budget notifications with no subscriber are read by nobody."
+  }
 }

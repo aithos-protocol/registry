@@ -481,13 +481,14 @@ resource "aws_cloudwatch_metric_alarm" "invocation_surge" {
 
 # --- Budget ------------------------------------------------------------------
 #
-# The stack costs about a euro a month at rest, so any alarm here means
-# something is wrong rather than that the service grew.
+# The stack costs a handful of euros a month at rest — the WAF's fixed fee is
+# most of it — so any alarm here means something is wrong rather than that the
+# service grew.
 
 resource "aws_budgets_budget" "monthly" {
   name         = local.name
   budget_type  = "COST"
-  limit_amount = var.monthly_budget_eur
+  limit_amount = var.monthly_budget
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
@@ -499,6 +500,22 @@ resource "aws_budgets_budget" "monthly" {
       threshold                  = notification.value
       threshold_type             = "PERCENTAGE"
       notification_type          = "FORECASTED"
+      subscriber_email_addresses = [var.alarm_email]
+    }
+  }
+
+  # A forecast is a model, and a model can be wrong in the quiet direction:
+  # spend that arrives in one burst near the end of a period can cross the
+  # ceiling without the forecast ever having crossed it first. One ACTUAL
+  # notification is the backstop that does not depend on a prediction.
+  dynamic "notification" {
+    for_each = var.alarm_email == null ? [] : [100]
+
+    content {
+      comparison_operator        = "GREATER_THAN"
+      threshold                  = notification.value
+      threshold_type             = "PERCENTAGE"
+      notification_type          = "ACTUAL"
       subscriber_email_addresses = [var.alarm_email]
     }
   }
