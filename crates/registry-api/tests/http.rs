@@ -841,3 +841,18 @@ async fn a_percent_encoded_digest_is_not_a_second_url() {
     .await;
     assert_eq!(status, 404, "the encoded spelling must not be a second URL");
 }
+
+// --- round-11 audit regression ------------------------------------------
+
+/// A rejected query string is not a body problem. `?limit=abc` never reaches
+/// the JSON layer — the extractor refuses it first — and §9 scopes
+/// `JSON_INVALID` to the request body, so answering with it blamed a body
+/// that was never at fault. The catch-all code is the honest one.
+#[tokio::test]
+async fn a_malformed_query_parameter_is_not_reported_as_a_body_problem() {
+    let app = app();
+    let (status, body) = get_json(&app, "/v1/agents?limit=abc").await;
+    assert_eq!(status, 400);
+    assert_eq!(body["code"], "REQUEST_REFUSED", "{body}");
+    assert_eq!(body["status"], 400);
+}

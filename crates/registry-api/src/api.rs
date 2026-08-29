@@ -142,7 +142,12 @@ async fn as_problem(response: Response) -> Response {
         413 => "CARD_TOO_LARGE",
         404 => "NOT_FOUND",
         405 => "METHOD_NOT_ALLOWED",
-        400 => "JSON_INVALID",
+        // No `JSON_INVALID` arm for a 400: every body-parse failure builds its
+        // own problem before this layer sees it, so a framework 400 arriving
+        // here is a rejected query string or header — and §9 scopes
+        // `JSON_INVALID` to the request *body*. `?limit=abc` was answered as
+        // a body defect the body did not have; the catch-all is the honest
+        // code for a refusal made by the framework.
         _ => "REQUEST_REFUSED",
     };
     Problem::new(parts.status.as_u16(), code, detail).into_response()
