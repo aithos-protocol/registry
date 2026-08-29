@@ -146,6 +146,7 @@ fixes checks a new finding against what was already decided and why.
 | 10 | m5 | The version-cursor existence check was eventually consistent, so a cursor the registry had just issued could come back `CURSOR_INVALID` | **Fixed.** Consistent, like every other read that decides something. | `crates/registry-lambda/src/aws_store.rs` |
 | 10 | m6 | `aithos verify <url>` buffered without bound and decoded lossily, so the digest printed could be of a document nobody sent | **Fixed.** Bounded while reading at 512 KiB, and strict UTF-8 — the same treatment the `jku` fetch already had, for the same reason. | `crates/aithos-cli/src/main.rs` (`fetch_card`) |
 | 11 | m1 | Framework 400s (a rejected query string) answered `JSON_INVALID`, which §9 scopes to the request body | **Fixed.** The 400 arm of `as_problem` is gone; framework refusals fall to `REQUEST_REFUSED`, and the body paths keep building their own problems before that layer sees them. Regression test drives `?limit=abc` through the real router. | `crates/registry-api/src/api.rs` (`as_problem`), `crates/registry-api/tests/http.rs::a_malformed_query_parameter_is_not_reported_as_a_body_problem` |
+| 12 | — | **No findings — second consecutive clean round, as a go/no-go validation.** Explicit judgement recorded: given only what the repository controls, nothing blocks a production go-live. The operational conditions (token rotation, the apply from a fresh attested zip, the production environment itself) live outside the tree and outside this table. | No action. | — |
 
 ## Loop check
 
@@ -165,6 +166,7 @@ thing the ledger exists to catch:
 | 9 | 0 | — |
 | 10 | 0 | — |
 | 11 | 0 | One minor, in the problem-shaping layer |
+| 12 | 0 | — |
 
 Rounds 4 through 8 were each cleaning up after the previous round. That is not a
 loop — no decision was ever reversed, and `LEDGER.md` was checked before every
