@@ -15,6 +15,13 @@ use serde_json::{Value, json};
 use error::{Error, Result};
 use keyfile::PrivateKey;
 
+/// Where the tool points when nobody says otherwise: the public registry.
+///
+/// Named as a constant because two places must agree on it — the clap default,
+/// and the transport-error hint that explains what to do while this hostname
+/// is not open yet.
+const DEFAULT_REGISTRY: &str = "https://registry.aithos.world";
+
 #[derive(Parser)]
 #[command(
     name = "aithos",
@@ -28,12 +35,7 @@ use keyfile::PrivateKey;
 )]
 struct Cli {
     /// Registry to talk to.
-    #[arg(
-        long,
-        global = true,
-        env = "AITHOS_REGISTRY",
-        default_value = "https://registry.aithos.world"
-    )]
+    #[arg(long, global = true, env = "AITHOS_REGISTRY", default_value = DEFAULT_REGISTRY)]
     registry: String,
 
     #[command(subcommand)]
@@ -149,14 +151,35 @@ fn main() {
 /// on every write, sending the publisher to look at their key rather than at
 /// their `--registry` flag.
 fn check_registry(registry: &str) -> Result<()> {
-    if !registry.starts_with("https://") || registry.ends_with('/') {
+    // No trailing-slash check: `run()` trims trailing slashes before anything
+    // sees the value, so testing for one here was a branch no input could
+    // reach.
+    if !registry.starts_with("https://") {
         return Err(Error::msg(format!(
-            "{registry:?} is not usable as a registry origin: it must be an https URL with no \
-             trailing slash.\n\nCards carry a `jku` pointing back at the registry, and §5.5 \
-             requires that to be HTTPS."
+            "{registry:?} is not usable as a registry origin: it must be an https URL.\n\n\
+             Cards carry a `jku` pointing back at the registry, and §5.5 requires that to \
+             be HTTPS."
         )));
     }
     Ok(())
+}
+
+/// A request that never got an answer, explained.
+///
+/// reqwest's own text names the URL and the OS error, which is right and not
+/// enough: while the public registry is not open yet, the very first thing a
+/// fresh install does is resolve a name that does not exist, and the message
+/// for that must say what to do — not send the publisher to check their DNS.
+fn transport_error(url: &str, error: &reqwest::Error) -> Error {
+    let mut message = format!("{url}: {error}");
+    if url.starts_with(DEFAULT_REGISTRY) && (error.is_connect() || error.is_timeout()) {
+        message.push_str(
+            "\n\nThis is the tool's default registry, and the public registry is not open \
+             yet. Point the tool at one you can reach: --registry <origin>, or \
+             AITHOS_REGISTRY in the environment.",
+        );
+    }
+    Error::msg(message)
 }
 
 fn run() -> Result<()> {
@@ -449,10 +472,12 @@ fn publish(
         "keys": keys.iter().map(|k| k.public_jwk()).collect::<Vec<_>>(),
         "proofs": proofs,
     });
+    let put_url = format!("{registry}/v1/agents/{agent_id}");
     let response = http()?
-        .put(format!("{registry}/v1/agents/{agent_id}"))
+        .put(&put_url)
         .json(&payload)
-        .send()?;
+        .send()
+        .map_err(|e| transport_error(&put_url, &e))?;
 
     let status = response.status();
     if status.is_success() {
@@ -494,9 +519,11 @@ fn http() -> Result<reqwest::blocking::Client> {
 /// Read an entry, if it exists. Knowing the published version before signing
 /// turns a rejection after the fact into an explanation beforehand.
 fn fetch_record(registry: &str, agent_id: &str) -> Result<Option<Value>> {
+    let url = format!("{registry}/v1/agents/{agent_id}");
     let response = http()?
-        .get(format!("{registry}/v1/agents/{agent_id}"))
-        .send()?;
+        .get(&url)
+        .send()
+        .map_err(|e| transport_error(&url, &e))?;
     let status = response.status();
     if status.as_u16() == 404 {
         return Ok(None);
@@ -562,10 +589,12 @@ fn withdraw(registry: &str, agent_id: &str, key_name: &str, yes: bool) -> Result
         "keys": [key.public_jwk()],
     });
 
+    let delete_url = format!("{registry}/v1/agents/{agent_id}");
     let response = http()?
-        .delete(format!("{registry}/v1/agents/{agent_id}"))
+        .delete(&delete_url)
         .json(&payload)
-        .send()?;
+        .send()
+        .map_err(|e| transport_error(&delete_url, &e))?;
     let status = response.status();
     let result: Value = serde_json::from_str(&response.text()?).unwrap_or(Value::Null);
     if !status.is_success() {
@@ -786,37 +815,64 @@ fn run_verify(registry: &str, target: &str, jwks: Option<&std::path::Path>) -> R
     Ok(())
 }
 
-fn fetch_card(registry: &str, target: &str) -> Result<(a2a_card::CanonicalCard, Option<String>)> {
-    // A local file wins only when the target looks like a path. Testing
-    // `exists()` first meant `aithos verify <agentId>`, run in a directory that
-    // happened to contain a file of that name, checked the file and said
-    // nothing about having done so — a right answer about the wrong document.
-    let path = std::path::Path::new(target);
-    let looks_like_a_path = target.contains(std::path::MAIN_SEPARATOR)
-        || target.starts_with('.')
-        || target.ends_with(".json");
-    if looks_like_a_path {
-        if !path.exists() {
-            return Err(Error::msg(format!("{target}: no such file")));
-        }
-        return Ok((card::load(path)?, Some(format!("file {target}"))));
-    }
+/// What a `verify` target is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Url,
+    File,
+    AgentId,
+}
 
-    let url = if target.starts_with("https://") {
-        target.to_string()
-    } else if target.starts_with("http://") {
+/// Decide how a `verify` target should be read.
+///
+/// URLs are decided **first**, and the order is the point: every URL contains
+/// `/` and a card URL ends in `.json`, so the path heuristic below swallowed
+/// them all — `aithos verify <url>`, which `--help` promises, answered "no
+/// such file" for every URL there is. The heuristic itself stays, for the
+/// reason it exists: testing `exists()` first meant an identifier shadowed by
+/// a local file of the same name was read silently — a right answer about the
+/// wrong document.
+fn target_kind(target: &str) -> Target {
+    if target.starts_with("https://") || target.starts_with("http://") {
+        return Target::Url;
+    }
+    if target.contains(std::path::MAIN_SEPARATOR)
+        || target.starts_with('.')
+        || target.ends_with(".json")
+    {
+        return Target::File;
+    }
+    Target::AgentId
+}
+
+fn fetch_card(registry: &str, target: &str) -> Result<(a2a_card::CanonicalCard, Option<String>)> {
+    let url = match target_kind(target) {
+        Target::File => {
+            let path = std::path::Path::new(target);
+            if !path.exists() {
+                return Err(Error::msg(format!("{target}: no such file")));
+            }
+            return Ok((card::load(path)?, Some(format!("file {target}"))));
+        }
         // The point of verifying is to learn where a document came from. Over
         // plain HTTP that answer is whatever the network chose to give.
-        return Err(Error::msg(format!(
-            "{target} is not HTTPS; a card fetched over plain HTTP tells you nothing about \
-             where it came from"
-        )));
-    } else {
-        check_registry(registry)?;
-        format!("{registry}/v1/agents/{target}/agent-card.json")
+        Target::Url if target.starts_with("http://") => {
+            return Err(Error::msg(format!(
+                "{target} is not HTTPS; a card fetched over plain HTTP tells you nothing about \
+                 where it came from"
+            )));
+        }
+        Target::Url => target.to_string(),
+        Target::AgentId => {
+            check_registry(registry)?;
+            format!("{registry}/v1/agents/{target}/agent-card.json")
+        }
     };
 
-    let response = http()?.get(&url).send()?;
+    let response = http()?
+        .get(&url)
+        .send()
+        .map_err(|e| transport_error(&url, &e))?;
     if !response.status().is_success() {
         return Err(Error::msg(format!("{url} answered {}", response.status())));
     }
@@ -938,6 +994,28 @@ mod tests {
         // because the *authorized* key is among the signers.
         check_provers(&[&genesis, &backup], &agent_id, Some(&rotated))
             .expect("re-adding the old key, co-signed by the current one");
+    }
+
+    /// The routing `--help` promises: an identifier, a URL, or a path. The
+    /// round-10 bounded-fetch rework left the URL arm unreachable — every URL
+    /// contains `/`, so the path heuristic claimed it first and
+    /// `verify <url>` answered "no such file" for every URL there is.
+    #[test]
+    fn a_url_target_is_a_url_not_a_missing_file() {
+        assert_eq!(
+            target_kind("https://r.example/v1/agents/x/agent-card.json"),
+            Target::Url
+        );
+        // Refused later for being plain HTTP — but refused as a URL, with the
+        // reason, not as a file that does not exist.
+        assert_eq!(target_kind("http://r.example/card.json"), Target::Url);
+        assert_eq!(target_kind("./agent-card.json"), Target::File);
+        assert_eq!(target_kind("cards/agent-card.json"), Target::File);
+        assert_eq!(target_kind("agent-card.json"), Target::File);
+        assert_eq!(
+            target_kind("NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"),
+            Target::AgentId
+        );
     }
 
     #[test]
