@@ -85,7 +85,7 @@ moves.
 ## Development
 
 ```sh
-cargo test           # 100 tests, none of which touch a network
+cargo test           # the offline suite; nothing in it touches a network
 cargo clippy --all-targets -- -D warnings
 cargo fmt --all
 cargo build -p aithos-a2a-card --target wasm32-unknown-unknown

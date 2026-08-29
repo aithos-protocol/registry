@@ -8,7 +8,11 @@ members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "cr
 version = "0.1.0-alpha.1"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.90"
+# The pinned toolchain, not one version less: 1.90 was declared and never
+# tested — no CI job built with it, so the claim was a guess published to
+# crates.io. The MSRV a package states should be one something exercises,
+# and the only toolchain exercised here is the pin.
+rust-version = "1.95"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
