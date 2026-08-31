@@ -92,6 +92,15 @@ resource "aws_cloudfront_distribution" "registry" {
   aliases         = [var.hostname]
   web_acl_id      = aws_wafv2_web_acl.registry.arn
 
+  # The apply returns when the distribution exists, not when every edge
+  # location carries it. Nothing downstream needs the propagation — the alias
+  # records point at a domain name that is valid from creation — and the wait
+  # is a quarter of an hour during which an interrupted apply leaves the
+  # distribution created but unrecorded in state: an orphan, and a
+  # CNAMEAlreadyExists on the retry. The checks that mean something — the
+  # smoke tests and the e2e suite — already wait for the edge, deliberately.
+  wait_for_deployment = false
+
   origin {
     origin_id                = local.s3_origin
     domain_name              = aws_s3_bucket.registry.bucket_regional_domain_name
