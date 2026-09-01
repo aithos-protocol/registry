@@ -7,9 +7,9 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0" }
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
-registry-dns = { package = "aithos-registry-dns", path = "../registry-dns", version = "0.1.0" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.2.0" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.2.0" }
+registry-dns = { package = "aithos-registry-dns", path = "../registry-dns", version = "0.2.0" }
 # `join_all` for resolving one request's domains concurrently; nothing else.
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 axum = { workspace = true }

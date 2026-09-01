@@ -20,7 +20,7 @@ name = "registry_core"
 
 [dependencies]
 time = { workspace = true }
-a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.2.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }

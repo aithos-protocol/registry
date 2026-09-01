@@ -12,8 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 registry-api = { path = "../registry-api" }
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
-registry-dns = { package = "aithos-registry-dns", path = "../registry-dns", version = "0.1.0" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.2.0" }
+registry-dns = { package = "aithos-registry-dns", path = "../registry-dns", version = "0.2.0" }
 # `join_all` for the revalidation pass; nothing else.
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 serde = { workspace = true }

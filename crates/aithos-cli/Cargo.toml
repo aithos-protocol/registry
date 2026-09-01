@@ -23,12 +23,12 @@ path = "src/main.rs"
 # side would drag the AWS SDK into every `cargo install`, for nothing.
 [dependencies]
 time = { workspace = true }
-a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0" }
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.2.0" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.2.0" }
 # Client-side resolution for `certify` and `verify` — the same behaviour the
 # registry runs, deliberately not a private reimplementation. This must never
 # pull `registry-api`: that would drag the AWS SDK into every `cargo install`.
-registry-dns = { package = "aithos-registry-dns", path = "../registry-dns", version = "0.1.0" }
+registry-dns = { package = "aithos-registry-dns", path = "../registry-dns", version = "0.2.0" }
 tokio = { version = "1", default-features = false, features = ["rt"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 clap = { workspace = true }

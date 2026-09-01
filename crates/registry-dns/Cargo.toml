@@ -21,7 +21,7 @@ name = "registry_dns"
 # AWS SDK into every `cargo install`. It must therefore depend on nothing
 # heavier than the resolver itself.
 [dependencies]
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.2.0" }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 hickory-resolver = "0.26"
