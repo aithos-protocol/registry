@@ -6,7 +6,39 @@ of an authorized key can change it.
 
 There are no accounts, no passwords and no sessions. **The key is the account.**
 
-See [`SPEC.md`](SPEC.md) for the normative rules.
+## Quickstart
+
+```sh
+cargo install aithos                      # from crates.io
+# or, prebuilt and with a provenance attestation:
+#   gh release download --repo aithos-protocol/registry --pattern '*apple-darwin*'
+#   gh attestation verify aithos-*.tar.gz --repo aithos-protocol/registry
+
+aithos key new              # generates your key. Its thumbprint — a 43-character
+                            # string, call it <kid> below — is your entry's
+                            # permanent address, known before anything is published.
+
+aithos card init            # writes agent-card.json, already valid
+$EDITOR agent-card.json     # name, description, endpoints — say what your agent is
+aithos publish agent-card.json --key <kid>
+
+aithos whatis <kid>         # read the entry back: status, lineage, who may change it
+aithos verify <kid>         # is the served card intact, and which key signed it?
+
+$EDITOR agent-card.json     # edit the card…
+aithos publish agent-card.json --key <kid> --bump patch    # …and publish the new version
+
+aithos withdraw <kid> --key <kid>         # permanent; the address is never reusable
+```
+
+The tool talks to `https://registry.aithos.world` by default; `--registry` (or
+`AITHOS_REGISTRY`) points it anywhere else, `registry-dev.aithos.world`
+included. Register a second key before you need it — publish one version signed
+by both (`--key` repeats) and either can act alone from then on; there is no
+operator to restore access to a lost key.
+
+See [`SPEC.md`](SPEC.md) for the normative rules; the rest of this page is why
+it works the way it does.
 
 ## What a V1 entry claims
 
@@ -116,19 +148,8 @@ rather than around locks.
 
 ## The command line
 
-```sh
-cargo install aithos                       # from crates.io
-# or, prebuilt and with a provenance attestation:
-#   gh release download --repo aithos-protocol/registry --pattern '*apple-darwin*'
-#   gh attestation verify aithos-*.tar.gz --repo aithos-protocol/registry
-
-aithos key new                             # its thumbprint is your entry's address
-aithos card init                           # a card that already passes the strict profile
-aithos publish agent-card.json --key <kid> --bump patch
-aithos verify <agent-id>                   # is this document intact, and who signed it?
-aithos whatis <agent-id>                   # what does the registry hold at this address?
-aithos withdraw <agent-id> --key <kid>     # permanent; the address is never reusable
-```
+The commands are in the [Quickstart](#quickstart); this is what they will and
+will not tell you.
 
 `whatis` is `whois` for an agent address, and the analogy holds in both
 directions. It reports registration facts — when the address was first
