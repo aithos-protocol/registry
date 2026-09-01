@@ -1,0 +1,106 @@
+{
+  "description": "The certify-domains payload: canonical bytes, refusals, replay. DOMAIN-CERTIFICATION.md §5.2–5.3",
+  "registryOrigin": "https://registry.aithos.world",
+  "reference": {
+    "payload": {
+      "action": "certify-domains",
+      "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "domains": ["acme.com", "acme.fr"],
+      "issuedAt": "2026-09-01T09:14:22.000Z",
+      "registryOrigin": "https://registry.aithos.world"
+    },
+    "canonical": "{\"action\":\"certify-domains\",\"agentId\":\"NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs\",\"domains\":[\"acme.com\",\"acme.fr\"],\"issuedAt\":\"2026-09-01T09:14:22.000Z\",\"registryOrigin\":\"https://registry.aithos.world\"}",
+    "payloadB64": "eyJhY3Rpb24iOiJjZXJ0aWZ5LWRvbWFpbnMiLCJhZ2VudElkIjoiTnpiTHNYaDh1RENjZC02TU53WEY0V183bm9XWEZaQWZIa3hac1JHQzlYcyIsImRvbWFpbnMiOlsiYWNtZS5jb20iLCJhY21lLmZyIl0sImlzc3VlZEF0IjoiMjAyNi0wOS0wMVQwOToxNDoyMi4wMDBaIiwicmVnaXN0cnlPcmlnaW4iOiJodHRwczovL3JlZ2lzdHJ5LmFpdGhvcy53b3JsZCJ9"
+  },
+  "emptySet": {
+    "note": "an empty domains array is valid and removes every certification (§5.2)",
+    "payload": {
+      "action": "certify-domains",
+      "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "domains": [],
+      "issuedAt": "2026-09-01T10:00:00.000Z",
+      "registryOrigin": "https://registry.aithos.world"
+    }
+  },
+  "refusals": [
+    {
+      "name": "an extra member is refused: the payload is exactly the object §5.2 states",
+      "payload": {
+        "action": "certify-domains",
+        "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "cardDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "domains": ["acme.com"],
+        "issuedAt": "2026-09-01T09:14:22.000Z",
+        "registryOrigin": "https://registry.aithos.world"
+      },
+      "code": "SIGNATURE_INVALID"
+    },
+    {
+      "name": "an unsorted domains array is refused",
+      "payload": {
+        "action": "certify-domains",
+        "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "domains": ["acme.fr", "acme.com"],
+        "issuedAt": "2026-09-01T09:14:22.000Z",
+        "registryOrigin": "https://registry.aithos.world"
+      },
+      "code": "DOMAINS_NOT_CANONICAL"
+    },
+    {
+      "name": "a duplicated domain is refused: strictly ascending admits no duplicate",
+      "payload": {
+        "action": "certify-domains",
+        "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "domains": ["acme.com", "acme.com"],
+        "issuedAt": "2026-09-01T09:14:22.000Z",
+        "registryOrigin": "https://registry.aithos.world"
+      },
+      "code": "DOMAINS_NOT_CANONICAL"
+    },
+    {
+      "name": "a foreign registryOrigin is refused: a certification cannot be lifted into another registry",
+      "payload": {
+        "action": "certify-domains",
+        "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "domains": ["acme.com"],
+        "issuedAt": "2026-09-01T09:14:22.000Z",
+        "registryOrigin": "https://registry.elsewhere.example"
+      },
+      "code": "SIGNATURE_INVALID"
+    },
+    {
+      "name": "nine domains are refused: §8 allows eight",
+      "payload": {
+        "action": "certify-domains",
+        "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "domains": [
+          "d1.example.com",
+          "d2.example.com",
+          "d3.example.com",
+          "d4.example.com",
+          "d5.example.com",
+          "d6.example.com",
+          "d7.example.com",
+          "d8.example.com",
+          "d9.example.com"
+        ],
+        "issuedAt": "2026-09-01T09:14:22.000Z",
+        "registryOrigin": "https://registry.aithos.world"
+      },
+      "code": "TOO_MANY_DOMAINS"
+    }
+  ],
+  "replay": {
+    "note": "§5.3(4): issuedAt must be strictly greater than the stored value, compared as instants",
+    "storedIssuedAt": "2026-09-01T09:14:22.000Z",
+    "refused": [
+      "2026-09-01T09:14:22.000Z",
+      "2026-09-01T09:14:22Z",
+      "2026-09-01T11:14:22+02:00",
+      "2026-09-01T09:14:21.999Z",
+      "2026-08-31T09:14:22.000Z"
+    ],
+    "refusedCode": "CERTIFICATION_NOT_INCREASING",
+    "accepted": "2026-09-01T09:14:22.001Z"
+  }
+}

@@ -18,11 +18,16 @@ aithos card init                        # a card that already passes the strict 
 aithos publish agent-card.json --key <kid>
 aithos verify <agent-id>                # is this document intact, and who signed it?
 aithos whatis <agent-id>                # what does the registry hold at this address?
+aithos certify <agent-id> --key <kid> --domains acme.com
+                                        # prove a domain: its zone declares the agent
 ```
 
 An entry states that a card was published by the holder of a key, and that every
 version since was signed by a key that lineage authorized. It says nothing about
-any domain or organisation, and the output says so every time.
+any organisation, and the output says so every time. A certified domain adds
+exactly one claim — the domain's zone publishes a record naming the agent, and a
+key holder asked for it to be listed — which `verify` re-resolves itself rather
+than taking on faith. Nothing else: no badge, no endpoint claim, no organisation.
 
 Licensed under Apache-2.0. Source, specification and audit history:
 <https://github.com/aithos-protocol/registry>

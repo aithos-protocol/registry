@@ -12,11 +12,18 @@
 //!
 //! [`SPEC.md` §3.2]: ../../../SPEC.md
 
+pub mod certify;
+pub mod domain;
 pub mod error;
 pub mod jwk;
 pub mod jws;
 pub mod write;
 
+pub use certify::{CERTIFY_ACTION, Certification, evaluate_certification};
+pub use domain::{
+    DNS_LABEL, Domain, MAX_DOMAINS, MAX_TXT_BYTES, MAX_TXT_RECORDS, TXT_VERSION,
+    agent_id_in_record, rrset_names_agent,
+};
 pub use error::{Code, RegistryError, Result};
 pub use jwk::{Alg, Jwk};
 pub use jws::ProtectedHeader;

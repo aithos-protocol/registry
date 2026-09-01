@@ -6,7 +6,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use aws_sdk_dynamodb::types::AttributeValue as Av;
-use registry_api::store::{AgentRecord, VersionRecord};
+use registry_api::store::{AgentRecord, CertificationState, DomainRecord, VersionRecord};
 use registry_core::Status;
 
 use crate::keys;
@@ -133,6 +133,69 @@ pub fn version_record(item: &Item) -> Result<VersionRecord, ItemError> {
     })
 }
 
+// --- domain certification (DOMAIN-CERTIFICATION.md §4) --------------------
+//
+// The two list-shaped halves travel as JSON text, like the agent item's
+// `keys`: DynamoDB never needs to look inside them — the one attribute a
+// condition reads, `certificationIssuedAt`, is its own string — and one
+// serialization means one round-trip test.
+
+/// `requestedDomains` as stored: a JSON array of strings, sorted, possibly
+/// empty (a string *set* cannot be empty, and the empty certification is a
+/// state §5.2 explicitly allows).
+pub fn requested_json(requested: &BTreeSet<String>) -> String {
+    serde_json::to_string(&requested.iter().collect::<Vec<_>>()).expect("strings serialize")
+}
+
+/// `observed` as stored: a JSON array of §4.2 objects plus the failure
+/// counter the revalidation pass owns.
+pub fn observed_json(observed: &[DomainRecord]) -> String {
+    let items: Vec<serde_json::Value> = observed
+        .iter()
+        .map(|d| {
+            serde_json::json!({
+                "domain": d.domain,
+                "certifiedAt": d.certified_at,
+                "lastCheckedAt": d.last_checked_at,
+                "consecutiveFailures": d.consecutive_failures,
+            })
+        })
+        .collect();
+    serde_json::to_string(&items).expect("plain values serialize")
+}
+
+pub fn certification_state(item: &Item) -> Result<CertificationState, ItemError> {
+    let requested: Vec<String> = serde_json::from_str(&s(item, "requestedDomains")?)
+        .map_err(|e| ItemError(format!("`requestedDomains` is not a JSON array: {e}")))?;
+
+    let raw: Vec<serde_json::Value> = serde_json::from_str(&s(item, "observed")?)
+        .map_err(|e| ItemError(format!("`observed` is not a JSON array: {e}")))?;
+    let mut observed = Vec::with_capacity(raw.len());
+    for entry in &raw {
+        let text = |name: &str| {
+            entry[name]
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| ItemError(format!("`observed` entry has no {name:?}")))
+        };
+        observed.push(DomainRecord {
+            domain: text("domain")?,
+            certified_at: text("certifiedAt")?,
+            last_checked_at: text("lastCheckedAt")?,
+            consecutive_failures: entry["consecutiveFailures"]
+                .as_u64()
+                .and_then(|n| u8::try_from(n).ok())
+                .ok_or_else(|| ItemError("`observed` entry has no `consecutiveFailures`".into()))?,
+        });
+    }
+
+    Ok(CertificationState {
+        requested: requested.into_iter().collect(),
+        observed,
+        issued_at: Some(s(item, "certificationIssuedAt")?),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +264,71 @@ mod tests {
             &keys::digest_sk("sha256:feed")
         );
         assert_eq!(version_record(&indexed).unwrap(), record);
+    }
+
+    #[test]
+    fn a_certification_state_round_trips_through_its_item_attributes() {
+        let state = CertificationState {
+            requested: ["acme.com".to_string(), "acme.fr".to_string()]
+                .into_iter()
+                .collect(),
+            observed: vec![DomainRecord {
+                domain: "acme.com".into(),
+                certified_at: "2026-09-01T09:00:00.000Z".into(),
+                last_checked_at: "2026-09-01T11:00:00.000Z".into(),
+                consecutive_failures: 1,
+            }],
+            issued_at: Some("2026-09-01T09:00:00.000Z".into()),
+        };
+
+        let mut item = Item::new();
+        item.insert(
+            "requestedDomains".into(),
+            Av::S(requested_json(&state.requested)),
+        );
+        item.insert("observed".into(), Av::S(observed_json(&state.observed)));
+        item.insert(
+            "certificationIssuedAt".into(),
+            Av::S("2026-09-01T09:00:00.000Z".into()),
+        );
+        assert_eq!(certification_state(&item).unwrap(), state);
+    }
+
+    /// The empty certification is a real state (§5.2: an empty set removes
+    /// everything) and a string *set* cannot hold it — which is why the lists
+    /// travel as JSON text.
+    #[test]
+    fn the_empty_certification_round_trips() {
+        let state = CertificationState {
+            requested: Default::default(),
+            observed: Vec::new(),
+            issued_at: Some("2026-09-01T10:00:00.000Z".into()),
+        };
+        let mut item = Item::new();
+        item.insert(
+            "requestedDomains".into(),
+            Av::S(requested_json(&state.requested)),
+        );
+        item.insert("observed".into(), Av::S(observed_json(&state.observed)));
+        item.insert(
+            "certificationIssuedAt".into(),
+            Av::S("2026-09-01T10:00:00.000Z".into()),
+        );
+        assert_eq!(certification_state(&item).unwrap(), state);
+    }
+
+    #[test]
+    fn a_malformed_certification_item_is_reported_not_guessed() {
+        let mut item = Item::new();
+        item.insert("requestedDomains".into(), Av::S("[]".into()));
+        item.insert("observed".into(), Av::S("not json".into()));
+        item.insert("certificationIssuedAt".into(), Av::S("t".into()));
+        assert!(
+            certification_state(&item)
+                .unwrap_err()
+                .to_string()
+                .contains("observed")
+        );
     }
 
     #[test]

@@ -188,3 +188,17 @@ SSRF in the client verifier (rounds 1 and 3 — a client-side tool run by an
 operator against a card they chose), and consistent reads on the anonymous
 record endpoint (round 2, B-m9 — one code path, not two that differ only in
 consistency).
+
+## Recorded outside an audit round
+
+**Domain certification stores its state on its own DynamoDB item** (`sk =
+CERT`), never as attributes of the agent's `CURRENT` item. `commit` replaces
+that item wholesale — the same mechanism B-M3 documented for `createdAt` — so
+any certification stored on it would be erased by the next publication: no
+error, no trace. The conditional write for a certification is on
+`certificationIssuedAt`, never on `seq`, so publishing and certifying are two
+writers that cannot contend for one condition; the revalidation pass writes
+`observed` alone, conditional on the certification it read still standing.
+**Do not "simplify" the CERT item onto the agent item in a later round** — the
+test that would catch it is
+`crates/registry-api/tests/certification.rs::publishing_after_certifying_keeps_the_domains`.

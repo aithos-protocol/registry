@@ -1,5 +1,10 @@
 //! Test helpers: real keys, real signatures. Nothing here is mocked, because
 //! the point of these tests is that the bytes line up.
+//!
+//! Shared by several test binaries, each of which uses its own subset — the
+//! card helpers mean nothing to the certification suite — so per-binary
+//! dead-code analysis has to be quieted here rather than answered.
+#![allow(dead_code)]
 
 use a2a_card::canonical::{b64url, canonicalize, signing_input};
 use a2a_card::{CanonicalCard, validate_value};

@@ -46,6 +46,25 @@ impl Key {
         Key(p256::ecdsa::SigningKey::random(&mut rand_core::OsRng))
     }
 
+    /// The fixture key for domain certification, derived from a seed.
+    ///
+    /// The certification test needs an agent whose identifier a *stable* DNS
+    /// record can name, and identifiers are key thumbprints — so the key has
+    /// to be reproducible across runs. Deriving it from a secret seed keeps
+    /// key files out of the loop: whoever holds the seed holds the fixture.
+    pub fn from_seed(seed: &str) -> Self {
+        use sha2::{Digest, Sha256};
+        let mut material = Sha256::digest(seed.as_bytes());
+        loop {
+            if let Ok(key) = p256::ecdsa::SigningKey::from_bytes(&material) {
+                return Key(key);
+            }
+            // Astronomically unlikely (the hash landed on 0 or above the
+            // curve order); re-hash rather than fail a test over it.
+            material = Sha256::digest(material);
+        }
+    }
+
     pub fn jwk(&self) -> Value {
         let point = self.0.verifying_key().to_encoded_point(false);
         json!({
@@ -330,4 +349,61 @@ pub async fn get_until(
         "{what}: {path} did not converge within {}s; {detail}",
         ATTEMPTS * EVERY.as_secs() as u32
     );
+}
+
+// --- domain certification (DOMAIN-CERTIFICATION.md) -----------------------
+
+/// The `certify-domains` envelope, signed by `key`, with a fresh `issuedAt`:
+/// the registry requires each accepted certification to move strictly
+/// forward, and the fixture entry lives across runs.
+pub fn certify_body(key: &Key, origin: &str, agent_id: &str, domains: &[&str]) -> Value {
+    let now = time_now_fixed_ms();
+    let payload = json!({
+        "action": "certify-domains",
+        "agentId": agent_id,
+        "domains": domains,
+        "issuedAt": now,
+        "registryOrigin": origin,
+    });
+    let bytes = a2a_card::canonical::canonicalize(&payload).unwrap();
+    let header = json!({"alg": "ES256", "typ": "JOSE", "kid": key.kid()});
+    let protected =
+        Base64UrlUnpadded::encode_string(&a2a_card::canonical::canonicalize(&header).unwrap());
+    json!({
+        "certification": {
+            "protected": protected,
+            "payload": Base64UrlUnpadded::encode_string(&bytes),
+            "signature": key.sign(&a2a_card::canonical::signing_input(&protected, &bytes)),
+        },
+        "keys": [key.jwk()],
+    })
+}
+
+/// Wall-clock UTC in the registry's own fixed-width millisecond form.
+fn time_now_fixed_ms() -> String {
+    let now = time::OffsetDateTime::now_utc();
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        now.year(),
+        now.month() as u8,
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+        now.millisecond(),
+    )
+}
+
+pub async fn put_domains(
+    client: &reqwest::Client,
+    origin: &str,
+    agent_id: &str,
+    body: &Value,
+) -> Response {
+    send(
+        client
+            .put(format!("{origin}/v1/agents/{agent_id}/domains"))
+            .json(body),
+    )
+    .await
 }

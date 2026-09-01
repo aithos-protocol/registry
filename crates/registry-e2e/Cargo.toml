@@ -17,4 +17,6 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 base64ct = { workspace = true }
 p256 = { version = "0.13", features = ["ecdsa"] }
+sha2 = { workspace = true }
+time = { workspace = true }
 rand_core = { version = "0.6", features = ["getrandom"] }

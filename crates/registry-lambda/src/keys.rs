@@ -21,6 +21,15 @@ pub fn agent_id_of_pk(pk: &str) -> Option<&str> {
 /// Sort key of the mutable current-state item.
 pub const CURRENT_SK: &str = "CURRENT";
 
+/// Sort key of the domain-certification item, one per agent.
+///
+/// Its own item, never attributes on the `CURRENT` item: `commit` replaces
+/// that item wholesale, so anything certification stored there would be
+/// silently erased by the next publication — no error, no trace. Keeping the
+/// state under a different sort key is what makes publishing and certifying
+/// two writers that cannot clobber each other.
+pub const CERT_SK: &str = "CERT";
+
 /// Sort key of one immutable version item.
 ///
 /// Zero-padded so that lexicographic sort order — the only order DynamoDB

@@ -30,6 +30,11 @@ p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"]
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 rsa = { version = "0.9", default-features = false, features = ["std", "sha2"] }
 semver = "1"
+# The Public Suffix List, embedded at compile time (`DOMAIN-CERTIFICATION.md`
+# §5.4). Embedded and not downloaded: the registry must not depend on a fetch
+# at startup, and two implementations comparing vectors must be comparing
+# against a list, not against the network on two different days.
+psl = "2"
 
 [dev-dependencies]
 rand_core = { version = "0.6", features = ["getrandom"] }

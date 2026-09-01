@@ -17,6 +17,11 @@ pub enum Code {
     KeyInvalid,
     UnprovenKey,
     CardInvalid,
+    DomainSyntaxInvalid,
+    DomainIsPublicSuffix,
+    DomainsNotCanonical,
+    TooManyDomains,
+    CertificationNotIncreasing,
 }
 
 impl Code {
@@ -36,6 +41,11 @@ impl Code {
             Code::KeyInvalid => "KEY_INVALID",
             Code::UnprovenKey => "UNPROVEN_KEY",
             Code::CardInvalid => "CARD_INVALID",
+            Code::DomainSyntaxInvalid => "DOMAIN_SYNTAX_INVALID",
+            Code::DomainIsPublicSuffix => "DOMAIN_IS_PUBLIC_SUFFIX",
+            Code::DomainsNotCanonical => "DOMAINS_NOT_CANONICAL",
+            Code::TooManyDomains => "TOO_MANY_DOMAINS",
+            Code::CertificationNotIncreasing => "CERTIFICATION_NOT_INCREASING",
         }
     }
 
@@ -44,7 +54,12 @@ impl Code {
         match self {
             Code::PrivateKeySubmitted => 400,
             Code::NotAuthorizedKey => 403,
-            Code::AgentIdMismatch | Code::VersionNotIncreasing => 409,
+            // `CERTIFICATION_NOT_INCREASING` sits with the other monotonicity
+            // conflicts: the request is well formed and signed, it just lost a
+            // race — or replayed a past — against the stored state.
+            Code::AgentIdMismatch
+            | Code::VersionNotIncreasing
+            | Code::CertificationNotIncreasing => 409,
             Code::Withdrawn => 410,
             _ => 422,
         }

@@ -14,6 +14,11 @@ pub struct Problem {
     pub detail: String,
     /// RFC 6901 pointer into the request body, when one applies.
     pub pointer: Option<String>,
+    /// Per-domain outcomes, for the two DNS problems of
+    /// `DOMAIN-CERTIFICATION.md` §11. RFC 9457 extension member: without it a
+    /// request naming four domains would have to be bisected to find which one
+    /// failed.
+    pub domains: Option<serde_json::Value>,
 }
 
 impl Problem {
@@ -23,11 +28,17 @@ impl Problem {
             code,
             detail: detail.into(),
             pointer: None,
+            domains: None,
         }
     }
 
     pub fn at(mut self, pointer: impl Into<String>) -> Self {
         self.pointer = Some(pointer.into());
+        self
+    }
+
+    pub fn with_domains(mut self, outcomes: serde_json::Value) -> Self {
+        self.domains = Some(outcomes);
         self
     }
 
@@ -60,6 +71,13 @@ impl Problem {
             "DUPLICATE_KEY" => "The same key was submitted twice",
             "KEY_INVALID" => "A submitted key is malformed",
             "UNPROVEN_KEY" => "A signing key did not ask for this publication",
+            "DOMAIN_SYNTAX_INVALID" => "Domain syntax is invalid",
+            "DOMAIN_IS_PUBLIC_SUFFIX" => "Domain is a public suffix",
+            "DOMAINS_NOT_CANONICAL" => "Domain list is not sorted",
+            "TOO_MANY_DOMAINS" => "Too many domains",
+            "CERTIFICATION_NOT_INCREASING" => "Certification does not move forward",
+            "DNS_RECORD_ABSENT" => "DNS record absent",
+            "DNS_UNRESOLVED" => "DNS resolution failed",
             // Codes produced by the layers around the handlers, which had no
             // arm here and so all read "Request rejected" — the one field of a
             // problem document a human sees first, saying nothing.
@@ -150,6 +168,9 @@ impl IntoResponse for Problem {
         });
         if let Some(pointer) = &self.pointer {
             body["pointer"] = json!(pointer);
+        }
+        if let Some(domains) = &self.domains {
+            body["domains"] = domains.clone();
         }
         (
             self.status,

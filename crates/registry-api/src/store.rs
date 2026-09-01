@@ -87,6 +87,41 @@ pub struct Page<T> {
     pub next_cursor: Option<String>,
 }
 
+/// One currently observed domain (`DOMAIN-CERTIFICATION.md` §4.2, §7).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DomainRecord {
+    /// A-label, lowercase — stored exactly as certified.
+    pub domain: String,
+    /// First observation of the current continuous run.
+    pub certified_at: String,
+    /// Most recent successful observation.
+    pub last_checked_at: String,
+    /// Failed revalidation passes since the last success. At three the domain
+    /// leaves `observed` (§7); any success resets it to zero.
+    pub consecutive_failures: u8,
+}
+
+/// An agent's certification state (`DOMAIN-CERTIFICATION.md` §4).
+///
+/// `requested` is what a key signed, verbatim; `observed` is what the registry
+/// can currently see, and is the only half ever published. They are stored
+/// together and updated by two different writers — certification replaces the
+/// whole state, revalidation touches `observed` alone — which is why the two
+/// write methods below carry different conditions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CertificationState {
+    /// The set from the last accepted certification. Sorted ascending, which
+    /// is also the signed order (§5.2).
+    pub requested: BTreeSet<String>,
+    /// The subset currently observed in DNS, with its §4.2 timestamps.
+    pub observed: Vec<DomainRecord>,
+    /// The `issuedAt` of the last accepted certification, in the registry's
+    /// canonical fixed-width millisecond form — see [`Store::put_certification`]
+    /// for why the width is load-bearing. `None` when nothing was ever
+    /// certified.
+    pub issued_at: Option<String>,
+}
+
 #[async_trait]
 pub trait Store: Send + Sync + 'static {
     async fn get_agent(&self, agent_id: &str) -> StoreResult<Option<AgentRecord>>;
@@ -140,4 +175,42 @@ pub trait Store: Send + Sync + 'static {
         limit: usize,
         cursor: Option<&str>,
     ) -> StoreResult<Page<AgentRecord>>;
+
+    /// The agent's certification state; the empty state when none is stored.
+    async fn get_certification(&self, agent_id: &str) -> StoreResult<CertificationState>;
+
+    /// Commit an accepted certification — the whole state at once.
+    ///
+    /// `state.issued_at` MUST be `Some`, in the canonical fixed-width
+    /// millisecond RFC 3339 form the handlers produce, and the commit MUST
+    /// fail with [`StoreError::Conflict`] unless the stored `issued_at` is
+    /// absent or **byte-wise smaller**. Byte order is the one comparison a
+    /// conditional write can make remotely, so the contract makes byte order
+    /// and instant order the same thing by fixing the width — the same move
+    /// the listing index makes with its timestamps. The condition is on
+    /// `issued_at` and never on `seq`: certifying and publishing are two
+    /// writers that must not contend for one conditional write
+    /// (`DOMAIN-CERTIFICATION.md` §4.3, and the overwrite trap the separate
+    /// item exists to avoid).
+    async fn put_certification(
+        &self,
+        agent_id: &str,
+        state: &CertificationState,
+    ) -> StoreResult<()>;
+
+    /// Replace `observed` alone, leaving `requested` untouched — the
+    /// revalidation pass's write (§7).
+    ///
+    /// Conditional on the stored `issued_at` still being `expected_issued_at`:
+    /// a certification that lands between the pass's read and its write
+    /// replaces the whole state, and observations computed against the old
+    /// `requested` must then die with it rather than overwrite the new one.
+    /// [`StoreError::Conflict`] means exactly that, and the pass simply moves
+    /// on — the next one reads fresh state.
+    async fn put_observations(
+        &self,
+        agent_id: &str,
+        expected_issued_at: &str,
+        observed: &[DomainRecord],
+    ) -> StoreResult<()>;
 }

@@ -1,0 +1,27 @@
+{
+  "description": "Domain syntax under DOMAIN-CERTIFICATION.md §5.4: A-label, lowercase, no trailing dot, LDH, no IP literal, no public suffix",
+  "valid": [
+    "acme.com",
+    "acme.fr",
+    "xn--acm-dla.com",
+    "agents.europe.acme.co.uk",
+    "a-1.acme.com"
+  ],
+  "invalid": [
+    { "domain": "acmé.com", "code": "DOMAIN_SYNTAX_INVALID", "note": "a U-label is refused, never converted" },
+    { "domain": "Acme.com", "code": "DOMAIN_SYNTAX_INVALID", "note": "not lowercase; refused, never lowered" },
+    { "domain": "acme.com.", "code": "DOMAIN_SYNTAX_INVALID", "note": "trailing dot" },
+    { "domain": "https://acme.com", "code": "DOMAIN_SYNTAX_INVALID", "note": "a scheme" },
+    { "domain": "acme.com:443", "code": "DOMAIN_SYNTAX_INVALID", "note": "a port" },
+    { "domain": "acme.com/path", "code": "DOMAIN_SYNTAX_INVALID", "note": "a path" },
+    { "domain": "user@acme.com", "code": "DOMAIN_SYNTAX_INVALID", "note": "userinfo" },
+    { "domain": "192.168.0.1", "code": "DOMAIN_SYNTAX_INVALID", "note": "an IP address literal" },
+    { "domain": "a_b.acme.com", "code": "DOMAIN_SYNTAX_INVALID", "note": "underscore is not an LDH character" },
+    { "domain": "-acme.com", "code": "DOMAIN_SYNTAX_INVALID", "note": "a label may not begin with a hyphen" },
+    { "domain": "acme..com", "code": "DOMAIN_SYNTAX_INVALID", "note": "an empty label" },
+    { "domain": "", "code": "DOMAIN_SYNTAX_INVALID", "note": "empty" },
+    { "domain": "com", "code": "DOMAIN_IS_PUBLIC_SUFFIX", "note": "an ICANN public suffix" },
+    { "domain": "co.uk", "code": "DOMAIN_IS_PUBLIC_SUFFIX", "note": "a multi-label public suffix" },
+    { "domain": "github.io", "code": "DOMAIN_IS_PUBLIC_SUFFIX", "note": "a private-section public suffix: one party controls the name, strangers control its children" }
+  ]
+}

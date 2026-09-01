@@ -44,6 +44,18 @@ async fn the_manifest_answers() {
         json!("3303592588e388e62e0f69f701af531d2f4e3991")
     );
     assert_eq!(body["canonicalization"], json!("RFC 8785"));
+
+    // The certification profile a second implementation would interoperate
+    // with: the underscored name, the tag version and the limits must be
+    // announced (`DOMAIN-CERTIFICATION.md` §6.5 of the implementation notes).
+    let cert = &body["domainCertification"];
+    assert_eq!(cert["record"], json!(registry_core::DNS_LABEL));
+    assert_eq!(cert["version"], json!(registry_core::TXT_VERSION));
+    assert_eq!(cert["maxDomains"], json!(registry_core::MAX_DOMAINS));
+    assert!(
+        cert["revalidateIntervalSeconds"].is_u64(),
+        "the deployment must publish its revalidation interval: {body}"
+    );
 }
 
 /// One agent, walked through its whole life.
@@ -410,6 +422,147 @@ async fn writes_are_refused_for_the_right_reasons() {
     )
     .await
     .expect(200, "withdrawal");
+}
+
+/// Domain certification against real DNS, on the durable fixture entry.
+///
+/// This test needs two extra pieces of environment, documented in
+/// `infra/RUNBOOK-PROD.md`:
+///
+/// - `REGISTRY_E2E_CERT_DOMAIN` — a domain whose zone carries a **permanent**
+///   `TXT` record at the underscored name declaring the fixture agent;
+/// - `REGISTRY_E2E_CERT_SEED` — the secret the fixture key derives from. The
+///   record names that key's thumbprint, so seed and record change together.
+///
+/// The fixture entry is deliberately **never withdrawn**: identifiers are
+/// single-use, so a withdrawn fixture plus a stable DNS record would be a
+/// permanently broken pair. Each run re-certifies (fresh `issuedAt`), checks
+/// the projection, exercises the replay refusal, then certifies the empty set
+/// so the fixture is left clean for the next run.
+#[tokio::test]
+#[ignore = "runs against a deployed environment; set REGISTRY_E2E_ORIGIN, REGISTRY_E2E_CERT_DOMAIN, REGISTRY_E2E_CERT_SEED"]
+async fn a_domain_is_certified_observed_and_released() {
+    let (origin, client) = (origin(), client());
+    let domain = std::env::var("REGISTRY_E2E_CERT_DOMAIN")
+        .expect("set REGISTRY_E2E_CERT_DOMAIN to the fixture domain (see infra/RUNBOOK-PROD.md)");
+    let seed = std::env::var("REGISTRY_E2E_CERT_SEED")
+        .expect("set REGISTRY_E2E_CERT_SEED to the fixture seed (see infra/RUNBOOK-PROD.md)");
+    let key = Key::from_seed(&seed);
+    let agent_id = key.kid();
+
+    // The fixture exists, or is created on first run. A withdrawn fixture is
+    // unrecoverable by design — say exactly what to do about it.
+    let record = get(&client, &origin, &format!("/v1/agents/{agent_id}")).await;
+    match record.status {
+        404 => {
+            let (card, _) = sign_card(card_body("1.0.0", "domain-certification fixture"), &[&key]);
+            put(
+                &client,
+                &origin,
+                &agent_id,
+                &write_body(&origin, &card, &[&key]),
+            )
+            .await
+            .expect(201, "creating the certification fixture entry");
+        }
+        200 if record.json()["status"] == json!("ACTIVE") => {}
+        200 => panic!(
+            "the fixture entry {agent_id} is withdrawn and identifiers are single-use: \
+             pick a new REGISTRY_E2E_CERT_SEED and update the TXT record to the new \
+             thumbprint (runbook)"
+        ),
+        other => panic!("reading the fixture entry: status {other}"),
+    }
+
+    // --- certify ---------------------------------------------------------
+
+    let body = certify_body(&key, &origin, &agent_id, &[&domain]);
+    let certified = put_domains(&client, &origin, &agent_id, &body).await;
+    certified.expect(200, "certification against real DNS");
+    let listed = certified.json();
+    assert_eq!(listed["domains"][0]["domain"], json!(domain));
+    assert!(listed["domains"][0]["certifiedAt"].is_string());
+
+    // Replaying the identical signed operation must be refused: this is the
+    // §5.3(4) defence, live.
+    put_domains(&client, &origin, &agent_id, &body)
+        .await
+        .expect(409, "replay of the same certification")
+        .expect_code("CERTIFICATION_NOT_INCREASING");
+
+    // The record projection serves the observation.
+    let read_back = get(&client, &origin, &format!("/v1/agents/{agent_id}")).await;
+    read_back.expect(200, "record after certification");
+    assert_eq!(read_back.json()["domains"][0]["domain"], json!(domain));
+
+    // --- release ---------------------------------------------------------
+
+    // The empty set removes every certification (§5.2) and leaves the fixture
+    // clean for the next run.
+    let releasing = certify_body(&key, &origin, &agent_id, &[]);
+    put_domains(&client, &origin, &agent_id, &releasing)
+        .await
+        .expect(200, "certifying the empty set");
+
+    let read_back = get(&client, &origin, &format!("/v1/agents/{agent_id}")).await;
+    assert_eq!(
+        read_back.json()["domains"],
+        json!([]),
+        "the released fixture must serve no domains"
+    );
+}
+
+/// The refusal a publisher actually meets first: a domain whose zone says
+/// nothing. Uses a throwaway entry and a name guaranteed to answer NXDOMAIN
+/// (`.invalid`, RFC 2606), and withdraws the entry afterwards.
+#[tokio::test]
+#[ignore = "runs against a deployed environment; set REGISTRY_E2E_ORIGIN"]
+async fn an_undeclared_domain_is_refused_live() {
+    let (origin, client) = (origin(), client());
+    let key = Key::new();
+    let agent_id = key.kid();
+
+    let (card, _) = sign_card(card_body("1.0.0", "certification refusal"), &[&key]);
+    let created = put(
+        &client,
+        &origin,
+        &agent_id,
+        &write_body(&origin, &card, &[&key]),
+    )
+    .await;
+    created.expect(201, "throwaway entry");
+    let digest = created.json()["cardDigest"].as_str().unwrap().to_string();
+
+    // `.invalid` answers NXDOMAIN from the root: an *answer*, so the outcome
+    // is absent — the publisher must add the record — never unresolved.
+    let response = put_domains(
+        &client,
+        &origin,
+        &agent_id,
+        &certify_body(&key, &origin, &agent_id, &["registry-e2e-absent.invalid"]),
+    )
+    .await;
+    response.expect(422, "certifying a domain with no declaration");
+    response.expect_code("DNS_RECORD_ABSENT");
+    assert_eq!(
+        response.json()["domains"][0]["outcome"],
+        json!("absent"),
+        "the per-domain outcome must be carried: {}",
+        String::from_utf8_lossy(&response.bytes)
+    );
+
+    // Atomicity: nothing was stored.
+    let record = get(&client, &origin, &format!("/v1/agents/{agent_id}")).await;
+    assert_eq!(record.json()["domains"], json!([]));
+
+    delete(
+        &client,
+        &origin,
+        &agent_id,
+        &withdraw_body(&key, &origin, &agent_id, &digest),
+    )
+    .await
+    .expect(200, "withdrawing the throwaway entry");
 }
 
 /// Input a client controls must never surface as a server fault: a 5xx budget

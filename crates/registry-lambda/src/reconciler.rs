@@ -488,6 +488,18 @@ mod tests {
         }
     }
 
+    /// The certification item is API-served state, never converged to the
+    /// object store: its stream events must not wake the reconciler, and above
+    /// all must not make it rewrite pointers for an agent whose card did not
+    /// change.
+    #[test]
+    fn certification_items_are_ignored() {
+        assert_eq!(
+            action_for(&record("AGENT#abc", crate::keys::CERT_SK)),
+            Action::Ignore
+        );
+    }
+
     /// A `REMOVE` event carries no image at all. Reading the identifier from
     /// the key rather than the image is what lets even that event name its
     /// agent — and converging on committed state is the right answer to an item

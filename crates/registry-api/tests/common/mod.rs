@@ -1,4 +1,9 @@
 //! HTTP test harness: a router over an in-memory store, and real signatures.
+//!
+//! Shared by several test binaries, each using its own subset — the
+//! certification helpers mean nothing to the write-path suite — so
+//! per-binary dead-code analysis is quieted here rather than answered.
+#![allow(dead_code)]
 
 use std::sync::Arc;
 
@@ -11,16 +16,40 @@ use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use registry_api::{MemoryStore, RegistryConfig, router};
+use registry_dns::StaticResolver;
 
 pub const ORIGIN: &str = "https://registry.aithos.world";
 
+/// A router whose DNS answers empty for every name: fine for everything that
+/// is not about certification, and the "nothing declared" world for what is.
 pub fn app() -> Router {
+    app_with(StaticResolver::new())
+}
+
+/// A router over the DNS this test describes. Same split as `MemoryStore`
+/// against the AWS store: the handlers under test are the real ones.
+pub fn app_with(resolver: StaticResolver) -> Router {
     router(
         Arc::new(MemoryStore::new()),
+        Arc::new(resolver),
         RegistryConfig {
             origin: ORIGIN.to_string(),
+            revalidate_interval_seconds: 3600,
         },
     )
+}
+
+/// The record data a zone publishes to declare `agent_id` (§3.2), spelled
+/// through the shared constants so no test invents its own dialect of it.
+pub fn zone_record(agent_id: &str) -> String {
+    format!("v={}; k={agent_id}", registry_core::TXT_VERSION)
+}
+
+/// The query name for one certified domain, through the one implementation.
+pub fn query_name(domain: &str) -> String {
+    registry_core::Domain::parse(domain)
+        .expect("test domain")
+        .query_name()
 }
 
 pub struct Key(p256::ecdsa::SigningKey);
@@ -251,4 +280,44 @@ pub fn header_of(res: &Response<Body>, name: &str) -> String {
         .and_then(|v| v.to_str().ok())
         .unwrap_or_default()
         .to_string()
+}
+
+// --- certification helpers (DOMAIN-CERTIFICATION.md) ----------------------
+
+/// The `PUT /v1/agents/{id}/domains` envelope, signed by `key`.
+pub fn certify_body(key: &Key, agent_id: &str, domains: &[&str], issued_at: &str) -> Value {
+    let payload = json!({
+        "action": "certify-domains",
+        "agentId": agent_id,
+        "domains": domains,
+        "issuedAt": issued_at,
+        "registryOrigin": ORIGIN,
+    });
+    let bytes = a2a_card::canonical::canonicalize(&payload).unwrap();
+    let header = json!({"alg": "ES256", "typ": "JOSE", "kid": key.kid()});
+    let protected =
+        Base64UrlUnpadded::encode_string(&a2a_card::canonical::canonicalize(&header).unwrap());
+    let signature = key.sign(&a2a_card::canonical::signing_input(&protected, &bytes));
+    json!({
+        "certification": {
+            "protected": protected,
+            "payload": Base64UrlUnpadded::encode_string(&bytes),
+            "signature": signature,
+        },
+        "keys": [key.jwk()],
+    })
+}
+
+pub async fn put_domains(app: &Router, agent_id: &str, body: &Value) -> (StatusCode, Value) {
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/agents/{agent_id}/domains"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let (status, bytes, _) = send(app, req).await;
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }

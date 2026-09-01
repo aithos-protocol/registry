@@ -28,6 +28,10 @@ aithos verify <kid>         # is the served card intact, and which key signed it
 $EDITOR agent-card.json     # edit the card…
 aithos publish agent-card.json --key <kid> --bump patch    # …and publish the new version
 
+aithos certify <kid> --key <kid> --domains acme.com
+                            # prove a domain: its zone publishes one TXT record
+                            # naming the agent, and the key signs the request
+
 aithos withdraw <kid> --key <kid>         # permanent; the address is never reusable
 ```
 
@@ -167,10 +171,20 @@ it meant reimplementing RFC 8785 canonicalization, A2A's field-presence rules
 and detached JWS. It works on any signed A2A card, not only cards from this
 registry: a verifier that only trusts its own issuer is not a verifier.
 
-It also reports what it did **not** establish — no domain, no organisation, and
-nothing about whether the key holder operates the endpoints the card declares.
-Output that lets a reader believe otherwise would be a phishing tool with a tick
-next to it.
+It also reports what it did **not** establish — no organisation, and nothing
+about whether the key holder operates the endpoints the card declares. Output
+that lets a reader believe otherwise would be a phishing tool with a tick next
+to it.
+
+`certify` adds the one domain claim the registry can hold
+([`DOMAIN-CERTIFICATION.md`](DOMAIN-CERTIFICATION.md)): the domain's zone
+publishes a record naming the agent, and a key holder asked for it to be
+listed. Both halves are checked, the record stays published as the evidence,
+and the registry re-resolves it hourly — so `verify` shows certified domains by
+re-resolving them itself rather than repeating the registry's word. What a
+certified domain still does not establish: any organisation, who operates the
+endpoints in the card, or anything about the agent's conduct. A domain and a
+date — no badge, no tick, no score.
 
 There is no `rotate` command. Rotation is the choice of which keys sign:
 `--key` repeats. Co-sign one version with the old key and the new one to widen

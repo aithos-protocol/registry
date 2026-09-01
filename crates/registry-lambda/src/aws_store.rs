@@ -15,7 +15,8 @@ use aws_sdk_dynamodb::types::{AttributeValue as Av, Put, TransactWriteItem};
 use aws_sdk_s3::operation::get_object::GetObjectError;
 use aws_sdk_s3::primitives::ByteStream;
 use registry_api::store::{
-    AgentRecord, Commit, Page, Store, StoreError, StoreResult, VersionRecord,
+    AgentRecord, CertificationState, Commit, DomainRecord, Page, Store, StoreError, StoreResult,
+    VersionRecord,
 };
 use registry_core::Status;
 use serde_json::json;
@@ -392,6 +393,88 @@ impl Store for AwsStore {
 
         let next_cursor = out.last_evaluated_key.as_ref().map(encode_cursor);
         Ok(Page { items, next_cursor })
+    }
+
+    async fn get_certification(&self, agent_id: &str) -> StoreResult<CertificationState> {
+        let out = self
+            .ddb
+            .get_item()
+            .table_name(&self.table)
+            .key("pk", Av::S(keys::agent_pk(agent_id)))
+            .key("sk", Av::S(keys::CERT_SK.into()))
+            // Consistent, like every read the write path decides on: the
+            // replay comparison of §5.3(4) is made against this.
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(backend)?;
+        match out.item {
+            None => Ok(CertificationState::default()),
+            Some(item) => item::certification_state(&item).map_err(backend),
+        }
+    }
+
+    async fn put_certification(
+        &self,
+        agent_id: &str,
+        state: &CertificationState,
+    ) -> StoreResult<()> {
+        let issued_at = state
+            .issued_at
+            .as_deref()
+            .ok_or_else(|| StoreError::Backend("a certification carries an issuedAt".into()))?;
+
+        // `UpdateItem` creates the item when it is absent, and the condition
+        // is the store contract's: absent, or byte-wise older than this
+        // certification. Byte order is instant order because the handlers
+        // write the fixed-width canonical form — the same bargain the listing
+        // index strikes. The condition never mentions `seq`: publishing owns
+        // the `CURRENT` item, certification owns this one, and the two must
+        // never contend for a conditional write.
+        self.ddb
+            .update_item()
+            .table_name(&self.table)
+            .key("pk", Av::S(keys::agent_pk(agent_id)))
+            .key("sk", Av::S(keys::CERT_SK.into()))
+            .update_expression(
+                "SET requestedDomains = :r, observed = :o, certificationIssuedAt = :t",
+            )
+            .condition_expression(
+                "attribute_not_exists(certificationIssuedAt) OR certificationIssuedAt < :t",
+            )
+            .expression_attribute_values(":r", Av::S(item::requested_json(&state.requested)))
+            .expression_attribute_values(":o", Av::S(item::observed_json(&state.observed)))
+            .expression_attribute_values(":t", Av::S(issued_at.to_string()))
+            .send()
+            .await
+            .map_err(conditional_error)?;
+        Ok(())
+    }
+
+    async fn put_observations(
+        &self,
+        agent_id: &str,
+        expected_issued_at: &str,
+        observed: &[DomainRecord],
+    ) -> StoreResult<()> {
+        // Conditional on the certification being the one the revalidation
+        // pass read: a fresh certification replaces the whole state, and
+        // observations computed against the old `requested` must die with it
+        // rather than overwrite the new one. `attribute_exists` is implied by
+        // the equality — an absent item fails the condition too.
+        self.ddb
+            .update_item()
+            .table_name(&self.table)
+            .key("pk", Av::S(keys::agent_pk(agent_id)))
+            .key("sk", Av::S(keys::CERT_SK.into()))
+            .update_expression("SET observed = :o")
+            .condition_expression("certificationIssuedAt = :expected")
+            .expression_attribute_values(":o", Av::S(item::observed_json(observed)))
+            .expression_attribute_values(":expected", Av::S(expected_issued_at.to_string()))
+            .send()
+            .await
+            .map_err(conditional_error)?;
+        Ok(())
     }
 }
 

@@ -1,6 +1,7 @@
 //! `aithos` — publish and verify signed A2A Agent Cards.
 
 mod card;
+mod certify;
 mod error;
 mod keyfile;
 mod verify;
@@ -90,6 +91,21 @@ enum Command {
         /// Skip the confirmation prompt. There is no undo.
         #[arg(long)]
         yes: bool,
+    },
+
+    /// Certify domains for an entry: each domain declares the agent in its
+    /// own DNS zone, and a key holder signs the request.
+    Certify {
+        /// The entry to certify domains for.
+        agent: String,
+        /// A key currently authorized for the entry.
+        #[arg(long = "key")]
+        key: String,
+        /// The complete set of domains, comma-separated, in A-label form.
+        /// The set replaces the set — name the ones to keep. `--domains ""`
+        /// removes every certification.
+        #[arg(long, value_delimiter = ',', required = true)]
+        domains: Vec<String>,
     },
 
     /// Look up what a registry holds at an address, the way `whois` does.
@@ -213,6 +229,14 @@ fn run() -> Result<()> {
         Command::Withdraw { agent, key, yes } => {
             check_registry(&registry)?;
             withdraw(&registry, &agent, &key, yes)
+        }
+        Command::Certify {
+            agent,
+            key,
+            domains,
+        } => {
+            check_registry(&registry)?;
+            run_certify(&registry, &agent, &key, &domains)
         }
         Command::Whatis { agent } => {
             check_registry(&registry)?;
@@ -611,6 +635,142 @@ fn withdraw(registry: &str, agent_id: &str, key_name: &str, yes: bool) -> Result
     Ok(())
 }
 
+// --- certify -------------------------------------------------------------
+
+/// Certify domains (`DOMAIN-CERTIFICATION.md`, Appendix A).
+///
+/// Local validation first, then a look at DNS from *this* machine: a missing
+/// record is reported with the exact zone lines to paste, and nothing is sent
+/// — a publisher waiting on propagation hears it from their own resolver, not
+/// from a rejected request. The registry resolves everything again itself;
+/// this check is a courtesy, never the proof.
+fn run_certify(
+    registry: &str,
+    agent_id: &str,
+    key_name: &str,
+    raw_domains: &[String],
+) -> Result<()> {
+    let domains = certify::parse_domains(raw_domains)?;
+
+    let record = fetch_record(registry, agent_id)?
+        .ok_or_else(|| Error::msg(format!("{registry} holds no entry {agent_id}")))?;
+    let authorized: Vec<&str> = record["authorizedKids"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+
+    println!("agent    {agent_id}");
+
+    // The same courtesy `publish` extends: refuse here, with an explanation,
+    // rather than collect a 403 from a server nobody can ask questions of.
+    let key = load_key(key_name)?;
+    let kid = key.kid()?;
+    if !authorized.contains(&kid.as_str()) {
+        return Err(Error::msg(format!(
+            "key {kid} is not currently authorized for {agent_id}.\n\n\
+             The entry currently trusts: {}.",
+            if authorized.is_empty() {
+                "(the registry did not say)".to_string()
+            } else {
+                authorized.join(", ")
+            }
+        )));
+    }
+
+    if domains.is_empty() {
+        println!("domains  (none — removing every certification)");
+    } else {
+        // What does this machine's DNS say?
+        let sightings = certify::sight_from_here(agent_id, &domains)?;
+        let mut missing = Vec::new();
+        let mut unresolved = Vec::new();
+        for (domain, sighting) in &sightings {
+            match sighting {
+                certify::Sighting::Declares => println!("domain   {domain}  declares this agent"),
+                certify::Sighting::Absent => {
+                    println!("domain   {domain}  no record visible from here");
+                    missing.push(domain);
+                }
+                certify::Sighting::Unresolved(why) => {
+                    println!("domain   {domain}  could not be resolved from here ({why})");
+                    unresolved.push(domain);
+                }
+            }
+        }
+
+        if !missing.is_empty() {
+            println!();
+            println!("Add these records, then run the same command again:");
+            println!();
+            print!("{}", certify::zone_lines(agent_id, &missing));
+            println!();
+            println!("Leave them published: they are the evidence, not a one-time challenge —");
+            println!("removing one withdraws the certification. If you just added them, your");
+            println!("resolver may simply not see them yet.");
+            return Err(Error::msg("nothing was sent"));
+        }
+        if !unresolved.is_empty() {
+            println!();
+            println!("Nothing can be concluded about the domains above from this machine.");
+            println!("Nothing was sent; retry when your resolver can answer.");
+            return Err(Error::msg("nothing was sent"));
+        }
+    }
+
+    let operation = certify::certification(&key, registry, agent_id, &domains)?;
+    let payload = json!({
+        "certification": operation,
+        "keys": [key.public_jwk()],
+    });
+    let url = format!("{registry}/v1/agents/{agent_id}/domains");
+    let response = http()?
+        .put(&url)
+        .json(&payload)
+        .send()
+        .map_err(|e| transport_error(&url, &e))?;
+    let status = response.status();
+    let result: Value = serde_json::from_str(&response.text()?).unwrap_or(Value::Null);
+    if !status.is_success() {
+        let mut message = format!(
+            "the registry refused this certification ({}): {}\n{}",
+            status.as_u16(),
+            result["code"].as_str().unwrap_or("?"),
+            result["detail"].as_str().unwrap_or("")
+        );
+        // The per-domain outcomes of §11, so a multi-domain refusal never
+        // needs bisecting.
+        if let Some(outcomes) = result["domains"].as_array() {
+            for entry in outcomes {
+                message.push_str(&format!(
+                    "\n  {}  {}",
+                    entry["domain"].as_str().unwrap_or("?"),
+                    entry["outcome"].as_str().unwrap_or("?")
+                ));
+            }
+        }
+        return Err(Error::msg(message));
+    }
+
+    let listed = result["domains"].as_array().cloned().unwrap_or_default();
+    if listed.is_empty() {
+        println!("certified  (no domains)");
+    } else {
+        println!("certified");
+        for entry in &listed {
+            println!(
+                "         {}  since {}",
+                entry["domain"].as_str().unwrap_or("?"),
+                entry["certifiedAt"].as_str().unwrap_or("?")
+            );
+        }
+    }
+    println!();
+    println!("The registry re-resolves these hourly; a removed record withdraws its");
+    println!("certification within a few passes. A certified domain establishes what");
+    println!("its zone declares — nothing about endpoints or organizations.");
+    Ok(())
+}
+
 // --- whatis --------------------------------------------------------------
 
 /// What a registry holds at one address.
@@ -801,6 +961,16 @@ fn run_verify(registry: &str, target: &str, jwks: Option<&std::path::Path>) -> R
         return Err(Error::msg("no signature on this card verified"));
     }
 
+    // Certified domains, only when the target is an entry: the *list* comes
+    // from the record, but every verdict below is resolved live by this
+    // client and never read back from the registry — a certification the
+    // reader cannot reproduce is one they would have to take on faith
+    // (`DOMAIN-CERTIFICATION.md`, Appendix A).
+    let domains_shown = match target_kind(target) {
+        Target::AgentId => print_certified_domains(registry, target)?,
+        _ => false,
+    };
+
     // What was established, and — the part that matters — what was not.
     if report.verified_against_trusted_key() {
         println!("This card was signed by a key you supplied out of band.");
@@ -810,9 +980,61 @@ fn run_verify(registry: &str, target: &str, jwks: Option<&std::path::Path>) -> R
         println!("this shows the document is intact, not who published it.");
     }
     println!();
-    println!("Not established: any domain, any organisation, and whether whoever");
-    println!("holds this key operates the endpoints the card declares.");
+    if domains_shown {
+        println!("Not established: any organisation, whether whoever holds this key");
+        println!("operates the endpoints the card declares, or anything about a domain");
+        println!("beyond the record its zone publishes.");
+    } else {
+        println!("Not established: any domain, any organisation, and whether whoever");
+        println!("holds this key operates the endpoints the card declares.");
+    }
     Ok(())
+}
+
+/// The certified-domain lines of `verify`. True when any line was printed.
+///
+/// A-labels exactly as stored, never rendered as U-labels, and no tick of any
+/// kind: the honest rendering is a domain, a date, and what this machine's
+/// resolver just saw (§9).
+fn print_certified_domains(registry: &str, agent_id: &str) -> Result<bool> {
+    let Some(record) = fetch_record(registry, agent_id)? else {
+        return Ok(false);
+    };
+    let listed = record["domains"].as_array().cloned().unwrap_or_default();
+    if listed.is_empty() {
+        return Ok(false);
+    }
+
+    let mut domains = Vec::new();
+    for entry in &listed {
+        let raw = entry["domain"].as_str().unwrap_or_default();
+        match registry_core::Domain::parse(raw) {
+            Ok(domain) => domains.push((domain, entry["certifiedAt"].as_str().unwrap_or("?"))),
+            // A stored domain this client cannot even parse is not one it can
+            // re-check; say so rather than resolve something else.
+            Err(_) => println!("domain   {raw:?}  cannot be re-checked (unparseable)"),
+        }
+    }
+
+    let sightings = certify::sight_from_here(
+        agent_id,
+        &domains.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>(),
+    )?;
+    for ((domain, certified_at), (_, sighting)) in domains.iter().zip(sightings) {
+        match sighting {
+            certify::Sighting::Declares => println!(
+                "domain   {domain}  declared by its zone, re-checked now (certified since {certified_at})"
+            ),
+            certify::Sighting::Absent => println!(
+                "domain   {domain}  listed by the registry, but no record is visible from here"
+            ),
+            certify::Sighting::Unresolved(why) => {
+                println!("domain   {domain}  could not be re-checked from here ({why})")
+            }
+        }
+    }
+    println!();
+    Ok(true)
 }
 
 /// What a `verify` target is.

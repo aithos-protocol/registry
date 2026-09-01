@@ -1,0 +1,31 @@
+[package]
+name = "aithos-registry-dns"
+description = "TXT resolution for Agent Card Registry domain certification: the resolver contract, a hickory implementation, and a static resolver for tests."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository = "https://github.com/aithos-protocol/registry"
+homepage = "https://github.com/aithos-protocol/registry"
+readme = "README.md"
+keywords = ["a2a", "agent", "dns", "txt", "registry"]
+categories = ["network-programming"]
+
+# The package carries the namespace; the library target does not, for the same
+# reason as `aithos-registry-core`.
+[lib]
+name = "registry_dns"
+
+# This crate exists so that the CLI and the server can share one resolution
+# behaviour without the CLI depending on `registry-api` — which would drag the
+# AWS SDK into every `cargo install`. It must therefore depend on nothing
+# heavier than the resolver itself.
+[dependencies]
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+hickory-resolver = "0.26"
+tokio = { version = "1", default-features = false, features = ["time"] }
+
+[dev-dependencies]
+tokio = { workspace = true }

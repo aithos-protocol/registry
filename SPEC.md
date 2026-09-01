@@ -686,7 +686,8 @@ migration:
 - **URL and identifier shape.** `agentId` derivation, the `/v1/agents/{id}/…`
   paths and the digest-based ETags are stable. A future domain-verification
   layer attaches as an attribute of the agent record. It changes neither the
-  identifier nor the card.
+  identifier nor the card. [`DOMAIN-CERTIFICATION.md`](DOMAIN-CERTIFICATION.md)
+  is that layer, realized as exactly such an additive profile.
 - **Signed statements.** V1 publishes no registry-signed statement. When one is
   introduced, it will be a separate envelope alongside the card, never a field
   inside it, so that stored cards stay byte-identical.

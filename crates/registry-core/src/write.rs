@@ -324,7 +324,7 @@ fn public_keys(keys: &BTreeMap<String, Jwk>) -> Vec<Value> {
     keys.values().map(Jwk::to_public).collect()
 }
 
-fn index_keys(submitted: &[Value]) -> Result<BTreeMap<String, Jwk>> {
+pub(crate) fn index_keys(submitted: &[Value]) -> Result<BTreeMap<String, Jwk>> {
     let mut keys = BTreeMap::new();
     for value in submitted {
         let jwk = Jwk::parse(value)?;
@@ -462,7 +462,7 @@ fn verify_publication_proof(
 ///
 /// Without the re-encoding check a signature could cover bytes that differ from
 /// the object the registry reads — the same member, spelled two ways.
-fn decode_bound_payload(payload_b64: &str) -> Result<(Vec<u8>, Value)> {
+pub(crate) fn decode_bound_payload(payload_b64: &str) -> Result<(Vec<u8>, Value)> {
     let payload = a2a_card::canonical::b64url_decode(payload_b64).map_err(|_| {
         RegistryError::new(Code::SignatureInvalid, "payload is not unpadded base64url")
     })?;
@@ -564,7 +564,7 @@ pub fn evaluate_withdrawal(
 /// Accepting extras would let a signature cover meaning the registry never
 /// read, which is the shape of every "the server ignored a field" bug that
 /// later turns out to matter.
-fn expect_exactly(value: &Value, members: &[&str]) -> Result<()> {
+pub(crate) fn expect_exactly(value: &Value, members: &[&str]) -> Result<()> {
     let obj = value.as_object().ok_or_else(|| {
         RegistryError::new(Code::SignatureInvalid, "payload is not a JSON object")
     })?;
@@ -586,7 +586,7 @@ fn expect_exactly(value: &Value, members: &[&str]) -> Result<()> {
 /// one accomplishes nothing that the digest binding does not already refuse.
 /// The shape is still checked, because a member nobody parses is a member that
 /// silently means nothing.
-fn expect_timestamp(value: &Value, member: &str) -> Result<()> {
+pub(crate) fn expect_timestamp(value: &Value, member: &str) -> Result<()> {
     let raw = value.get(member).and_then(Value::as_str).ok_or_else(|| {
         RegistryError::new(
             Code::SignatureInvalid,
@@ -604,7 +604,7 @@ fn expect_timestamp(value: &Value, member: &str) -> Result<()> {
     Ok(())
 }
 
-fn expect(value: &Value, member: &str, want: &str) -> Result<()> {
+pub(crate) fn expect(value: &Value, member: &str, want: &str) -> Result<()> {
     match value.get(member).and_then(Value::as_str) {
         Some(got) if got == want => Ok(()),
         Some(got) => Err(RegistryError::new(

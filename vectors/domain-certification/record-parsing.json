@@ -1,0 +1,98 @@
+{
+  "description": "TXT record-data parsing and RRset matching, DOMAIN-CERTIFICATION.md §3.2–3.3",
+  "agentId": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+  "cases": [
+    {
+      "name": "a minimal record names its agent",
+      "record": "v=A2A1; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+    },
+    {
+      "name": "a multi-string record is the concatenation of its character-strings, no separator",
+      "characterStrings": ["v=A2A1; k=NzbLsXh8uDCcd-6MNwXF4W", "_7noWXFZAfHkxZsRGC9Xs"],
+      "record": "v=A2A1; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+    },
+    {
+      "name": "ASCII space and horizontal tab around tags and separators are ignored",
+      "record": "\tv = A2A1 ;  k\t=\tNzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs ",
+      "agentIdInRecord": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+    },
+    {
+      "name": "an unknown tag is ignored so a later version can add one",
+      "record": "v=A2A1; note=hello; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs; x=1",
+      "agentIdInRecord": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+    },
+    {
+      "name": "a trailing separator is tolerated",
+      "record": "v=A2A1; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs;",
+      "agentIdInRecord": "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+    },
+    {
+      "name": "v absent: the record is not this profile's",
+      "record": "k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": null
+    },
+    {
+      "name": "v not first: the first tag must be v",
+      "record": "k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs; v=A2A1",
+      "agentIdInRecord": null
+    },
+    {
+      "name": "an unknown version is ignored, not an error",
+      "record": "v=A2A2; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": null
+    },
+    {
+      "name": "the value of v is case-sensitive",
+      "record": "v=a2a1; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": null
+    },
+    {
+      "name": "tag names are lowercase and case-sensitive, so V is an unknown tag — and then v is not first",
+      "record": "V=A2A1; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": null
+    },
+    {
+      "name": "k is base64url and case-sensitive: a case-folded value is a different key",
+      "record": "v=A2A1; k=nzblsxh8udccd-6mnwxf4w_7nowxfzafhkxzsrgc9xs",
+      "agentIdInRecord": "nzblsxh8udccd-6mnwxf4w_7nowxfzafhkxzsrgc9xs"
+    },
+    {
+      "name": "a chunk that is not tag=value makes the whole record unparsed",
+      "record": "v=A2A1; garbage; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+      "agentIdInRecord": null
+    },
+    {
+      "name": "a record with no tags at all is ignored",
+      "record": "just some text",
+      "agentIdInRecord": null
+    }
+  ],
+  "rrsets": [
+    {
+      "name": "one valid record wins over malformed and foreign neighbours",
+      "records": [
+        "not a record at all",
+        "v=A2A9; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "v=A2A1; k=SomeOtherAgentIdentifierThatIsNotTheOneSought",
+        "v=A2A1; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs"
+      ],
+      "matches": true
+    },
+    {
+      "name": "malformed and foreign records alone name nobody",
+      "records": [
+        "not a record at all",
+        "v=A2A9; k=NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs",
+        "v=A2A1; k=SomeOtherAgentIdentifierThatIsNotTheOneSought"
+      ],
+      "matches": false
+    },
+    {
+      "name": "an empty record set names nobody",
+      "records": [],
+      "matches": false
+    }
+  ]
+}

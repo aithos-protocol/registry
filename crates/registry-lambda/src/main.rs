@@ -7,11 +7,41 @@
 use std::sync::Arc;
 
 use registry_api::{RegistryConfig, router};
+use registry_dns::HickoryResolver;
 use registry_lambda::{AwsStore, Reconciler};
 
 /// Read a required setting, failing at boot rather than on the first request.
 fn env(name: &str) -> Result<String, lambda_http::Error> {
     std::env::var(name).map_err(|_| format!("{name} is not set").into())
+}
+
+/// The resolver both roles resolve with (`DOMAIN-CERTIFICATION.md` §5.5).
+///
+/// The Lambda environment's own resolver by default; `REGISTRY_DNS_SERVERS`
+/// (comma-separated IPs) forces one for development. Configuration only —
+/// nothing request-shaped ever reaches this.
+fn resolver() -> Result<HickoryResolver, lambda_http::Error> {
+    match std::env::var("REGISTRY_DNS_SERVERS") {
+        Ok(list) if !list.is_empty() => {
+            let servers = list
+                .split(',')
+                .map(|s| s.trim().parse())
+                .collect::<Result<Vec<std::net::IpAddr>, _>>()
+                .map_err(|e| format!("REGISTRY_DNS_SERVERS: {e}"))?;
+            HickoryResolver::with_servers(&servers).map_err(Into::into)
+        }
+        _ => HickoryResolver::from_system().map_err(Into::into),
+    }
+}
+
+/// The revalidation interval the manifest publishes (§7). It has to match the
+/// deployed schedule, so it comes from the environment the schedule's own
+/// Terraform sets, with the current `rate(1 hour)` as the default.
+fn revalidate_interval_seconds() -> u64 {
+    std::env::var("REGISTRY_REVALIDATE_SECONDS")
+        .ok()
+        .and_then(|raw| raw.parse().ok())
+        .unwrap_or(3600)
 }
 
 #[tokio::main]
@@ -69,7 +99,14 @@ async fn main() -> Result<(), lambda_http::Error> {
                 }
             };
 
-            let app = router(Arc::new(store), RegistryConfig { origin });
+            let app = router(
+                Arc::new(store),
+                Arc::new(resolver()?),
+                RegistryConfig {
+                    origin,
+                    revalidate_interval_seconds: revalidate_interval_seconds(),
+                },
+            );
             let app = match edge_secret {
                 Some(secret) => app.layer(axum::middleware::from_fn(
                     move |req: axum::extract::Request, next: axum::middleware::Next| {
@@ -118,10 +155,15 @@ async fn main() -> Result<(), lambda_http::Error> {
                 bucket.clone(),
             ));
             let reconciler = Arc::new(Reconciler::new(s3, bucket));
+            // The revalidation of certified domains (DOMAIN-CERTIFICATION.md
+            // §7) rides the same hourly invocation: same enumeration, same
+            // cadence the manifest publishes.
+            let resolver: Arc<dyn registry_dns::Resolver> = Arc::new(resolver()?);
             lambda_runtime::run(lambda_runtime::service_fn(
                 move |_event: lambda_runtime::LambdaEvent<serde_json::Value>| {
                     let reconciler = Arc::clone(&reconciler);
                     let store = Arc::clone(&store);
+                    let resolver = Arc::clone(&resolver);
                     async move {
                         let ids = store
                             .sweep_agent_ids()
@@ -153,12 +195,31 @@ async fn main() -> Result<(), lambda_http::Error> {
                             );
                         }
 
-                        if !repairs.failed.is_empty() {
+                        // Run even when convergence found repairs: the two
+                        // passes answer different questions, and a certified
+                        // domain must not stay published an extra hour because
+                        // an unrelated pointer needed rewriting.
+                        let revalidation = registry_lambda::revalidate::run_pass(
+                            store.as_ref() as &dyn registry_api::Store,
+                            &resolver,
+                            &ids,
+                            &registry_api::api::now_rfc3339(),
+                        )
+                        .await;
+                        tracing::info!(
+                            examined = revalidation.examined,
+                            removed = revalidation.removed.len(),
+                            "revalidated certified domains"
+                        );
+
+                        let mut failures = repairs.failed.clone();
+                        failures.extend(revalidation.failed.iter().cloned());
+                        if !failures.is_empty() {
                             return Err(format!(
-                                "{} of {} agents could not be converged: {}",
-                                repairs.failed.len(),
+                                "{} of {} agents could not be converged or revalidated: {}",
+                                failures.len(),
                                 ids.len(),
-                                repairs.failed.join("; ")
+                                failures.join("; ")
                             )
                             .into());
                         }
@@ -166,6 +227,8 @@ async fn main() -> Result<(), lambda_http::Error> {
                         Ok::<_, lambda_runtime::Error>(serde_json::json!({
                             "agents": ids.len(),
                             "repaired": repairs.len(),
+                            "revalidated": revalidation.examined,
+                            "domainsRemoved": revalidation.removed.len(),
                         }))
                     }
                 },

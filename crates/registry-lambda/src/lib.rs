@@ -9,6 +9,7 @@ pub mod aws_store;
 pub mod item;
 pub mod keys;
 pub mod reconciler;
+pub mod revalidate;
 
 pub use aws_store::AwsStore;
 pub use reconciler::Reconciler;

@@ -10,7 +10,10 @@ use async_trait::async_trait;
 
 use registry_core::Status;
 
-use crate::store::{AgentRecord, Commit, Page, Store, StoreError, StoreResult, VersionRecord};
+use crate::store::{
+    AgentRecord, CertificationState, Commit, DomainRecord, Page, Store, StoreError, StoreResult,
+    VersionRecord,
+};
 
 #[derive(Default)]
 struct Inner {
@@ -18,6 +21,12 @@ struct Inner {
     versions: BTreeMap<String, Vec<VersionRecord>>,
     cards: BTreeMap<(String, String), Vec<u8>>,
     keys: BTreeMap<String, Vec<serde_json::Value>>,
+    // Deliberately its own map, never a field of the agent entry: `commit`
+    // replaces the agent record wholesale, and a certification stored on it
+    // would silently vanish at the next publication. The deployed backend
+    // makes the same split with a separate item, and the test that publishes
+    // after certifying holds both to it.
+    certifications: BTreeMap<String, CertificationState>,
 }
 
 #[derive(Default)]
@@ -203,5 +212,61 @@ impl Store for MemoryStore {
             .then(|| items.last().map(|a| a.agent_id.clone()))
             .flatten();
         Ok(Page { items, next_cursor })
+    }
+
+    async fn get_certification(&self, agent_id: &str) -> StoreResult<CertificationState> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .certifications
+            .get(agent_id)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn put_certification(
+        &self,
+        agent_id: &str,
+        state: &CertificationState,
+    ) -> StoreResult<()> {
+        let new = state
+            .issued_at
+            .as_deref()
+            .ok_or_else(|| StoreError::Backend("a certification carries an issuedAt".into()))?;
+        let mut inner = self.inner.lock().unwrap();
+        // Byte comparison, deliberately: it is the comparison the deployed
+        // backend's conditional write makes, and the contract fixes the
+        // stored form's width so that byte order is instant order. Two
+        // backends behind one contract must refuse the same writes.
+        if let Some(stored) = inner
+            .certifications
+            .get(agent_id)
+            .and_then(|c| c.issued_at.as_deref())
+            && stored >= new
+        {
+            return Err(StoreError::Conflict);
+        }
+        inner
+            .certifications
+            .insert(agent_id.to_string(), state.clone());
+        Ok(())
+    }
+
+    async fn put_observations(
+        &self,
+        agent_id: &str,
+        expected_issued_at: &str,
+        observed: &[DomainRecord],
+    ) -> StoreResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(current) = inner.certifications.get_mut(agent_id) else {
+            return Err(StoreError::Conflict);
+        };
+        if current.issued_at.as_deref() != Some(expected_issued_at) {
+            return Err(StoreError::Conflict);
+        }
+        current.observed = observed.to_vec();
+        Ok(())
     }
 }

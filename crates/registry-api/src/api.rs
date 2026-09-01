@@ -13,11 +13,13 @@ use serde_json::{Value, json};
 
 use a2a_card::CanonicalCard;
 use registry_core::{
-    AgentState, DetachedJws, Outcome, Status, evaluate_withdrawal, evaluate_write,
+    AgentState, DetachedJws, Outcome, Status, evaluate_certification, evaluate_withdrawal,
+    evaluate_write, rrset_names_agent,
 };
+use registry_dns::{ResolveError, Resolver};
 
 use crate::problem::Problem;
-use crate::store::{AgentRecord, Commit, Store};
+use crate::store::{AgentRecord, CertificationState, Commit, DomainRecord, Store};
 
 /// Limits of `SPEC.md` §8.
 pub const MAX_CARD_BYTES: usize = 256 * 1024;
@@ -46,17 +48,31 @@ pub struct RegistryConfig {
     /// withdrawal payloads, so a request signed for one registry cannot be
     /// replayed against another.
     pub origin: String,
+    /// How often the deployment re-resolves certified domains, in seconds.
+    /// `DOMAIN-CERTIFICATION.md` §7 requires the interval to be published, so
+    /// the manifest carries it — and it has to come from configuration,
+    /// because the schedule lives in the deployment, not in this code.
+    pub revalidate_interval_seconds: u64,
 }
 
 #[derive(Clone)]
 pub struct AppState {
     pub store: Arc<dyn Store>,
+    /// Resolution for `PUT …/domains` (`DOMAIN-CERTIFICATION.md` §5.5) — the
+    /// one write that resolves DNS, because that resolution is its whole job.
+    /// No other handler may touch this.
+    pub resolver: Arc<dyn Resolver>,
     pub config: Arc<RegistryConfig>,
 }
 
-pub fn router(store: Arc<dyn Store>, config: RegistryConfig) -> Router {
+pub fn router(
+    store: Arc<dyn Store>,
+    resolver: Arc<dyn Resolver>,
+    config: RegistryConfig,
+) -> Router {
     let state = AppState {
         store,
+        resolver,
         config: Arc::new(config),
     };
     Router::new()
@@ -75,6 +91,7 @@ pub fn router(store: Arc<dyn Store>, config: RegistryConfig) -> Router {
             "/v1/agents/{agent_id}/versions/{digest}/agent-card.json",
             get(get_version_card),
         )
+        .route("/v1/agents/{agent_id}/domains", put(put_domains))
         .route("/v1/registry", get(manifest))
         .fallback(not_found)
         // Every refusal this service makes is an RFC 9457 problem — except the
@@ -202,9 +219,14 @@ async fn put_agent(
     // record rather than writing the same bytes again.
     if accepted.outcome == Outcome::Unchanged {
         let record = current.expect("an unchanged write implies an existing record");
+        let certification = state.store.get_certification(&agent_id).await?;
         return Ok((
             StatusCode::OK,
-            axum::Json(agent_json(&record, &state.config)),
+            axum::Json(agent_json(
+                &record,
+                Some(&certification.observed),
+                &state.config,
+            )),
         )
             .into_response());
     }
@@ -230,7 +252,20 @@ async fn put_agent(
     } else {
         StatusCode::OK
     };
-    let mut response = (status, axum::Json(agent_json(&record, &state.config))).into_response();
+    // Read back after the commit, so what this response shows is what the
+    // publication left standing — the test that certifies and then publishes
+    // watches this to catch the overwrite trap the separate storage exists to
+    // avoid.
+    let certification = state.store.get_certification(&agent_id).await?;
+    let mut response = (
+        status,
+        axum::Json(agent_json(
+            &record,
+            Some(&certification.observed),
+            &state.config,
+        )),
+    )
+        .into_response();
     if accepted.is_creation() {
         let location = format!("/v1/agents/{agent_id}");
         if let Ok(v) = location.parse() {
@@ -266,9 +301,138 @@ async fn delete_agent(
         .store
         .withdraw(&agent_id, record.seq, &now_rfc3339())
         .await?;
+    // §5.7: a withdrawn entry certifies nothing, and its projection stops
+    // showing domains the moment it stops showing a card.
     Ok((
         StatusCode::OK,
-        axum::Json(agent_json(&record, &state.config)),
+        axum::Json(agent_json(&record, Some(&[]), &state.config)),
+    )
+        .into_response())
+}
+
+// --- domain certification (DOMAIN-CERTIFICATION.md) ----------------------
+
+async fn put_domains(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    body: Bytes,
+) -> Result<Response, Problem> {
+    let (certification, keys) = parse_certify_body(&body)?;
+
+    let record = state
+        .store
+        .get_agent(&agent_id)
+        .await?
+        .ok_or_else(Problem::not_found)?;
+    if record.status == Status::Withdrawn {
+        // §5.7: the same shape as the card and the JWKS.
+        return Err(gone());
+    }
+
+    let stored = state.store.get_certification(&agent_id).await?;
+    let agent_state = to_agent_state(&record)?;
+
+    let accepted = evaluate_certification(
+        &agent_state,
+        &state.config.origin,
+        stored.issued_at.as_deref(),
+        &certification.protected,
+        &certification.payload,
+        &certification.signature,
+        &keys,
+    )?;
+
+    // §5.5: the registry resolves every domain itself, with its own resolver —
+    // nothing request-shaped can name one — and concurrently, so the worst
+    // case costs one timeout rather than eight.
+    let lookups = accepted.domains.iter().map(|domain| {
+        let resolver = Arc::clone(&state.resolver);
+        let name = domain.query_name();
+        async move { resolver.txt(&name).await }
+    });
+    let answers = futures_util::future::join_all(lookups).await;
+
+    let mut outcomes = Vec::with_capacity(accepted.domains.len());
+    let (mut absent, mut unresolved) = (0usize, 0usize);
+    for (domain, answer) in accepted.domains.iter().zip(answers) {
+        let outcome = match answer {
+            Ok(records) if rrset_names_agent(&records, &agent_id) => "observed",
+            // A name that answered without naming this agent and a name with
+            // no records at all make the same statement: the declaration is
+            // not published.
+            Ok(_) | Err(ResolveError::NoRecords) => {
+                absent += 1;
+                "absent"
+            }
+            Err(ResolveError::Failed(_)) => {
+                unresolved += 1;
+                "unresolved"
+            }
+        };
+        outcomes.push(json!({ "domain": domain.as_str(), "outcome": outcome }));
+    }
+
+    if absent + unresolved > 0 {
+        // §5.5: atomic. Storing the subset that resolved would leave
+        // `requestedDomains` different from any set a key ever signed. §11
+        // separates the two codes by the caller's next action, so when both
+        // occurred, `absent` wins — retrying cannot conjure a record that is
+        // not there, and the `domains` member carries the full picture.
+        let code = if absent > 0 {
+            "DNS_RECORD_ABSENT"
+        } else {
+            "DNS_UNRESOLVED"
+        };
+        let total = accepted.domains.len();
+        return Err(Problem::new(
+            422,
+            code,
+            format!(
+                "{} of {total} domain(s) were not observed in DNS; nothing was stored — \
+                 see `domains` for the outcome of each",
+                absent + unresolved
+            ),
+        )
+        .with_domains(json!(outcomes)));
+    }
+
+    // §5.6: requested becomes the signed set, observed becomes the same set
+    // stamped with the observation time.
+    let now = now_rfc3339();
+    let issued_at = canonical_ms(&accepted.issued_at).ok_or_else(|| {
+        Problem::new(
+            500,
+            "INTERNAL",
+            "an accepted issuedAt failed to re-render; this is a bug",
+        )
+    })?;
+    let new_state = CertificationState {
+        requested: accepted
+            .domains
+            .iter()
+            .map(|d| d.as_str().to_string())
+            .collect(),
+        observed: accepted
+            .domains
+            .iter()
+            .map(|d| DomainRecord {
+                domain: d.as_str().to_string(),
+                certified_at: now.clone(),
+                last_checked_at: now.clone(),
+                consecutive_failures: 0,
+            })
+            .collect(),
+        issued_at: Some(issued_at),
+    };
+    state.store.put_certification(&agent_id, &new_state).await?;
+
+    Ok((
+        StatusCode::OK,
+        axum::Json(agent_json(
+            &record,
+            Some(&new_state.observed),
+            &state.config,
+        )),
     )
         .into_response())
 }
@@ -390,9 +554,16 @@ async fn get_agent(
         .get_agent(&agent_id)
         .await?
         .ok_or_else(Problem::not_found)?;
+    // A second store read, deliberately not merged with the first into any
+    // kind of transaction: nothing depends on the two being one snapshot, and
+    // a withdrawn entry serves no domains (§5.7) without needing the read.
+    let domains = match record.status {
+        Status::Withdrawn => Vec::new(),
+        Status::Active => state.store.get_certification(&agent_id).await?.observed,
+    };
     Ok((
         [(header::CACHE_CONTROL, SHORT)],
-        axum::Json(agent_json(&record, &state.config)),
+        axum::Json(agent_json(&record, Some(&domains), &state.config)),
     )
         .into_response())
 }
@@ -457,7 +628,7 @@ async fn list_agents(
     let items: Vec<Value> = page
         .items
         .iter()
-        .map(|r| agent_json(r, &state.config))
+        .map(|r| agent_json(r, None, &state.config))
         .collect();
     let mut body = json!({ "agents": items });
     if let Some(cursor) = page.next_cursor {
@@ -503,6 +674,18 @@ async fn manifest(State(state): State<AppState>) -> Response {
             "keysPerRequest": MAX_KEYS,
             "signaturesPerCard": MAX_SIGNATURES,
             "validationIssuesReported": a2a_card::presence::MAX_ISSUES,
+        },
+        // A second implementation must be able to verify it is querying the
+        // same underscored name, expecting the same first tag, and holding
+        // the same limits — and §7 requires the revalidation interval to be
+        // published, because the freshness bound means nothing unstated.
+        "domainCertification": {
+            "record": registry_core::DNS_LABEL,
+            "version": registry_core::TXT_VERSION,
+            "maxDomains": registry_core::MAX_DOMAINS,
+            "revalidateIntervalSeconds": state.config.revalidate_interval_seconds,
+            "removalAfterFailedPasses": 3,
+            "profile": "DOMAIN-CERTIFICATION.md, in the repository named by testVectors",
         },
         "claim": "An entry states that its Agent Card was published by the holder of a \
                   key, and that every version since was signed by a key authorized by \
@@ -567,8 +750,21 @@ fn if_none_match_matches(headers: &HeaderMap, etag: &str) -> bool {
         .any(|candidate| candidate == etag)
 }
 
-fn agent_json(record: &AgentRecord, config: &RegistryConfig) -> Value {
-    json!({
+/// The record projection.
+///
+/// `domains` is `Some` on every single-record read — `certifiedDomains`,
+/// sorted, and never `requestedDomains`: a reader is told what the registry
+/// can currently see, not what somebody once asked for
+/// (`DOMAIN-CERTIFICATION.md` §6). It is `None` in the listing, whose page
+/// would otherwise cost one certification read per row for a member §7.4
+/// never promised; an absent member says "not stated here", which is honest,
+/// where an empty one would claim there are none.
+fn agent_json(
+    record: &AgentRecord,
+    domains: Option<&[DomainRecord]>,
+    config: &RegistryConfig,
+) -> Value {
+    let mut body = json!({
         "agentId": record.agent_id,
         "status": match record.status { Status::Active => "ACTIVE", Status::Withdrawn => "WITHDRAWN" },
         "seq": record.seq,
@@ -579,7 +775,22 @@ fn agent_json(record: &AgentRecord, config: &RegistryConfig) -> Value {
         "updatedAt": record.updated_at,
         "agentCardUrl": format!("{}/v1/agents/{}/agent-card.json", config.origin, record.agent_id),
         "jwksUrl": format!("{}/v1/agents/{}/jwks.json", config.origin, record.agent_id),
-    })
+    });
+    if let Some(observed) = domains {
+        let mut listed: Vec<&DomainRecord> = observed.iter().collect();
+        listed.sort_by(|a, b| a.domain.cmp(&b.domain));
+        body["domains"] = listed
+            .iter()
+            .map(|d| {
+                json!({
+                    "domain": d.domain,
+                    "certifiedAt": d.certified_at,
+                    "lastCheckedAt": d.last_checked_at,
+                })
+            })
+            .collect();
+    }
+    body
 }
 
 fn to_agent_state(record: &AgentRecord) -> Result<AgentState, Problem> {
@@ -624,7 +835,9 @@ fn check_if_match(headers: &HeaderMap, current_digest: &str) -> Result<(), Probl
     }
 }
 
-struct Withdrawal {
+/// A transmitted signed operation: the withdrawal envelope of `SPEC.md` §6.5,
+/// reused verbatim by certification (`DOMAIN-CERTIFICATION.md` §5.1).
+struct SignedOperation {
     protected: String,
     payload: String,
     signature: String,
@@ -713,33 +926,45 @@ fn detached_jws(value: &Value, pointer: &str) -> Result<DetachedJws, Problem> {
     })
 }
 
-fn parse_withdraw_body(body: &[u8]) -> Result<(Withdrawal, Vec<Value>), Problem> {
+fn parse_withdraw_body(body: &[u8]) -> Result<(SignedOperation, Vec<Value>), Problem> {
+    parse_operation_body(body, "withdrawal")
+}
+
+fn parse_certify_body(body: &[u8]) -> Result<(SignedOperation, Vec<Value>), Problem> {
+    parse_operation_body(body, "certification")
+}
+
+/// `{ "<member>": {protected, payload, signature}, "keys": [...] }` — the one
+/// envelope both signed operations share, under the same strict rules and the
+/// same body limit as every other write.
+fn parse_operation_body(
+    body: &[u8],
+    member: &str,
+) -> Result<(SignedOperation, Vec<Value>), Problem> {
     let root = parse_envelope(body)?;
     let obj = root.as_object().expect("checked in parse_envelope");
-    reject_unknown(obj, &["withdrawal", "keys"])?;
+    reject_unknown(obj, &[member, "keys"])?;
 
-    let w = obj
-        .get("withdrawal")
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            Problem::json_invalid("`withdrawal` is absent or not an object").at("/withdrawal")
-        })?;
+    let w = obj.get(member).and_then(Value::as_object).ok_or_else(|| {
+        Problem::json_invalid(format!("`{member}` is absent or not an object"))
+            .at(format!("/{member}"))
+    })?;
     let field = |name: &str| -> Result<String, Problem> {
         w.get(name)
             .and_then(Value::as_str)
             .map(str::to_string)
             .ok_or_else(|| {
                 Problem::json_invalid(format!("`{name}` is absent or not a string"))
-                    .at(format!("/withdrawal/{name}"))
+                    .at(format!("/{member}/{name}"))
             })
     };
-    let withdrawal = Withdrawal {
+    let operation = SignedOperation {
         protected: field("protected")?,
         payload: field("payload")?,
         signature: field("signature")?,
     };
     let keys = take_keys(obj)?;
-    Ok((withdrawal, keys))
+    Ok((operation, keys))
 }
 
 fn parse_envelope(body: &[u8]) -> Result<Value, Problem> {
@@ -811,7 +1036,7 @@ fn reject_unknown(obj: &serde_json::Map<String, Value>, allowed: &[&str]) -> Res
 /// Fixed width also means every timestamp the registry serves has the same
 /// shape, which matters for clients that compare them as strings — which the
 /// sort key itself demonstrates is a reasonable thing to do.
-fn now_rfc3339() -> String {
+pub fn now_rfc3339() -> String {
     let now = time::OffsetDateTime::now_utc();
     format!(
         "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
@@ -823,4 +1048,30 @@ fn now_rfc3339() -> String {
         now.second(),
         now.millisecond(),
     )
+}
+
+/// A validated RFC 3339 instant, re-rendered in the registry's canonical
+/// fixed-width millisecond UTC form for storage.
+///
+/// Fixed width is what lets the store's conditional write compare bytes and
+/// mean instants — the same move the listing index makes, for the same reason
+/// — and truncation is monotone, so ordering survives it. The corner it
+/// costs: two certifications inside one millisecond, distinguished only below
+/// it, reach the store as equals; the second answers 409 and a retry with a
+/// fresher timestamp succeeds. Same family of answer, one extra round trip,
+/// and no string comparison ever lies about order.
+fn canonical_ms(raw: &str) -> Option<String> {
+    let t = time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+        .ok()?
+        .to_offset(time::UtcOffset::UTC);
+    Some(format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        t.year(),
+        t.month() as u8,
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second(),
+        t.millisecond(),
+    ))
 }
