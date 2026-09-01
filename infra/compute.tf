@@ -251,9 +251,10 @@ data "aws_iam_policy_document" "sweeper" {
     resources = ["${aws_cloudwatch_log_group.sweeper.arn}:*"]
   }
 
-  # Reads the register. This is the one component allowed to enumerate it, and
-  # it is read-only: the sweeper never changes what is committed, only what is
-  # served.
+  # Reads the register. This is the one component allowed to enumerate it.
+  # Toward *committed* state — cards, versions, the authorized set, the
+  # certification requests — it is read-only; the one write it holds, below,
+  # reports observations.
   #
   # Two actions, because it makes two different calls: `Query` on the index to
   # list identifiers, and `GetItem` on the table to read each agent's committed
@@ -269,6 +270,18 @@ data "aws_iam_policy_document" "sweeper" {
   statement {
     sid       = "ReadOneRecord"
     actions   = ["dynamodb:GetItem"]
+    resources = [aws_dynamodb_table.registry.arn]
+  }
+
+  # The revalidation pass (DOMAIN-CERTIFICATION.md §7) is the sweeper's one
+  # write to the table, and the narrow kind: `UpdateItem` setting `observed`
+  # on the certification item, conditional on the certification it read still
+  # standing. IAM cannot scope a grant to one sort key, so that condition is
+  # where the boundary lives — and the first manual pass on dev is what found
+  # the grant missing, exactly the run the runbook prescribes after a deploy.
+  statement {
+    sid       = "ReportObservations"
+    actions   = ["dynamodb:UpdateItem"]
     resources = [aws_dynamodb_table.registry.arn]
   }
 
