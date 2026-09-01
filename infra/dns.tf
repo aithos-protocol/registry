@@ -75,3 +75,23 @@ resource "aws_route53_record" "aaaa" {
     evaluate_target_health = false
   }
 }
+
+# --- domain-certification e2e fixture ----------------------------------------
+#
+# The live certification test needs a domain whose zone carries a *permanent*
+# record declaring the fixture agent. Permanent is the profile's own rule
+# (DOMAIN-CERTIFICATION.md §3.5: the record is the evidence, not a challenge),
+# so the record is deployed with the environment rather than created and
+# deleted around test runs. The `_a2a` label is the one `registry-core` pins as
+# `DNS_LABEL`; Terraform cannot read a Rust constant, and the deployed
+# manifest's `domainCertification.record` announces the same value, which is
+# what keeps the two honest.
+resource "aws_route53_record" "e2e_cert_fixture" {
+  count = var.e2e_cert_thumbprint == "" ? 0 : 1
+
+  zone_id = aws_route53_zone.registry.zone_id
+  name    = "_a2a.e2e-cert.${var.hostname}"
+  type    = "TXT"
+  ttl     = 300
+  records = ["v=A2A1; k=${var.e2e_cert_thumbprint}"]
+}

@@ -19,3 +19,7 @@ region = "us-east-1"
 #
 # Left null, the stack still builds and the SNS topic simply has no subscriber.
 # alarm_email = "you@example.com"
+
+# The domain-certification e2e fixture (RUNBOOK §9). The fixture domain is
+# e2e-cert.registry-dev.aithos.world; this pins its declared agent.
+e2e_cert_thumbprint = "ooebMMBS91lUGRBi2E467jh0E8YQRg1dPHRTrE55saw"

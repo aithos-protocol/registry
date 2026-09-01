@@ -101,3 +101,13 @@ variable "alarm_email" {
     error_message = "A production environment must set alarm_email: alarms and budget notifications with no subscriber are read by nobody."
   }
 }
+
+# The public thumbprint of the domain-certification e2e fixture key
+# (`registry-e2e/tests/live.rs`, `a_domain_is_certified_observed_and_released`).
+# Empty disables the fixture record — prod stays empty until the suite is meant
+# to certify there. Not a secret: the secret is the seed the key derives from,
+# which never enters Terraform (RUNBOOK §9).
+variable "e2e_cert_thumbprint" {
+  type    = string
+  default = ""
+}

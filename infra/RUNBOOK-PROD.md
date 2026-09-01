@@ -174,3 +174,45 @@ will not resurrect it.
 Same commit rule (§1), same `alarm_email`, `terraform plan` read before
 `apply` — and never an apply while the deployed zip is newer than the one on
 disk.
+
+## 9. Domain certification — the live fixture
+
+The certification live test (`registry-e2e`,
+`a_domain_is_certified_observed_and_released`) works against a **fixture
+entry** whose identifier a permanent DNS record declares. Identifiers are
+key thumbprints and single-use, so the fixture key must be reproducible: it
+derives from a seed, and the seed is the only secret.
+
+The pieces, per environment:
+
+- **The record** — `_a2a.e2e-cert.<hostname>`, deployed by Terraform when
+  `e2e_cert_thumbprint` is set (dev: set in `env/dev.tfvars`; prod: empty
+  until the suite is meant to certify there). It is permanent by design
+  (DOMAIN-CERTIFICATION.md §3.5) — do not clean it up between runs.
+- **The seed** — `REGISTRY_E2E_CERT_SEED`, kept wherever operator secrets
+  live, never in this repository. The thumbprint in the tfvars is derived
+  from it (`Key::from_seed` in the e2e harness).
+- **The fixture entry** — created by the test itself on first run, and
+  **never withdrawn**: each run re-certifies with a fresh `issuedAt`, checks
+  the projection, exercises the replay refusal, then certifies the empty set
+  so the fixture is left clean.
+
+Running the certification tests against dev:
+
+```sh
+REGISTRY_E2E_ORIGIN=https://registry-dev.aithos.world \
+REGISTRY_E2E_CERT_DOMAIN=e2e-cert.registry-dev.aithos.world \
+REGISTRY_E2E_CERT_SEED=<the seed> \
+  cargo test -p registry-e2e -- --ignored --test-threads=1
+```
+
+If the fixture entry was ever withdrawn (the test refuses loudly): pick a new
+seed, put its thumbprint in the tfvars, apply, and let the test re-create the
+entry — the old identifier stays dead, which is the protocol working.
+
+Two operational notes. The hourly sweeper now also re-resolves every
+certified domain (three failed passes remove one; `CertifiedDomainRemovals`
+in the `Registry` namespace counts removals — a metric, deliberately no
+alarm). And the manifest publishes the revalidation interval from the
+`REGISTRY_REVALIDATE_SECONDS` env var, default 3600: if `sweep_schedule`
+ever changes, set that variable on the **api** function to match.

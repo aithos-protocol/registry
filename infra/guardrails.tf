@@ -520,3 +520,22 @@ resource "aws_budgets_budget" "monthly" {
     }
   }
 }
+
+# A certified domain removed by the revalidation pass is an event worth
+# counting — a publisher deleted their record, a zone expired, or something
+# further away went wrong — but it is *legitimate* behaviour, so it gets a
+# metric and no alarm: paging on it would train the operator to ignore the
+# pager. The sweeper's summary line carries the count; `examined` distinguishes
+# it from the convergence line, whose own `repaired` field feeds SweepRepairs.
+resource "aws_cloudwatch_log_metric_filter" "domain_removals" {
+  name           = "${local.name}-domain-removals"
+  log_group_name = aws_cloudwatch_log_group.sweeper.name
+  pattern        = "{ ($.fields.examined >= 0) && ($.fields.removed > 0) }"
+
+  metric_transformation {
+    name          = "CertifiedDomainRemovals"
+    namespace     = "Registry"
+    value         = "$.fields.removed"
+    default_value = 0
+  }
+}
