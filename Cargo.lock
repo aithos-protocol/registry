@@ -57,7 +57,7 @@ dependencies = [
 
 [[package]]
 name = "aithos"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "aes-kw",
@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "aithos-a2a-card"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "base64ct",
  "serde",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "aithos-registry-core"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "aithos-a2a-card",
  "base64ct",
@@ -2306,7 +2306,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "registry-api"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "aithos-a2a-card",
  "aithos-registry-core",
@@ -2328,7 +2328,7 @@ dependencies = [
 
 [[package]]
 name = "registry-e2e"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "aithos-a2a-card",
  "aithos-registry-core",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "registry-lambda"
-version = "0.1.0-alpha.1"
+version = "0.1.0"
 dependencies = [
  "aithos-registry-core",
  "async-trait",

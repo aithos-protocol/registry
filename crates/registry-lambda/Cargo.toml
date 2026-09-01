@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 registry-api = { path = "../registry-api" }
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0-alpha.1" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 async-trait = { workspace = true }

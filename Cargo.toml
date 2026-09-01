@@ -3,9 +3,11 @@ resolver = "3"
 members = ["crates/a2a-card", "crates/registry-core", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e", "crates/aithos-cli"]
 
 [workspace.package]
-# Alpha, and honestly so: the write protocol changed in a breaking way
-# this morning, and the registry runs in one development environment.
-version = "0.1.0-alpha.1"
+# 0.1.0, no longer alpha: the registry the CLI defaults to is in production,
+# a full identity lifecycle has run against it, and twelve blind audit rounds
+# closed clean. Still 0.x, and that is the whole promise — a breaking change
+# to the write protocol goes to 0.2.0, it never rides in on a patch.
+version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
 # The pinned toolchain, not one version less: 1.90 was declared and never

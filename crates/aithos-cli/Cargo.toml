@@ -23,8 +23,8 @@ path = "src/main.rs"
 # side would drag the AWS SDK into every `cargo install`, for nothing.
 [dependencies]
 time = { workspace = true }
-a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0-alpha.1" }
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0-alpha.1" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
 clap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

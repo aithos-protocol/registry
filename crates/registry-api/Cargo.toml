@@ -7,8 +7,8 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0-alpha.1" }
-registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0-alpha.1" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.1.0" }
+registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.1.0" }
 axum = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
