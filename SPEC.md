@@ -676,9 +676,17 @@ stated exception.
 
 ## 10. Deliberately out of scope
 
-V1 does **not** provide: domain verification, organizational identity, endpoint
-liveness or conformance checks, a transparency log, accounts, search, ranking,
-reputation, or any notion of a verified badge.
+V1 does **not** provide: organizational identity, endpoint liveness or
+conformance checks, a transparency log, accounts, search, ranking, reputation,
+or any notion of a verified badge.
+
+Domain verification was on that list, and no longer is:
+[`DOMAIN-CERTIFICATION.md`](DOMAIN-CERTIFICATION.md) provides it, as the
+additive profile the next paragraph reserved room for. It changes nothing here —
+no card field, no canonicalization rule, no stored byte — and a registry that
+does not implement it stays conformant to this document. What it adds is stated
+narrowly in that profile's §1 and bounded in its §9, and it is not an
+organizational identity: the rest of this list stands.
 
 Three things are reserved so that later work is additive rather than a
 migration:

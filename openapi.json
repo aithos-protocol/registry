@@ -1,0 +1,1443 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Aithos Agent Card Registry",
+    "version": "0.2.0",
+    "summary": "A public registry of signed A2A Agent Cards, where the key is the account.",
+    "description": "Anyone may publish an Agent Card; the card is signed by its owner's key; only\na holder of an authorized key can change it. There are no accounts, no\npasswords and no sessions, so no endpoint here takes a credential — a write\nis authorized by a signature over the operation, carried in the request body.\n\nAn entry may also certify ownership of domains, each proved by a record in\nthat domain's own DNS zone.\n\nTwo documents are normative and this one is not:\n\n- [`SPEC.md`](https://github.com/aithos-protocol/registry/blob/main/SPEC.md)\n  — identity model, card processing, writes, public endpoints, limits, and\n  the problem table.\n- [`DOMAIN-CERTIFICATION.md`](https://github.com/aithos-protocol/registry/blob/main/DOMAIN-CERTIFICATION.md)\n  — the domain certification profile, additive to the above.\n\n---\n\nSPEC.md is normative and this document is not. Where the two disagree, SPEC.md wins and this document is the defect.\n\nIt is written by hand rather than derived from the code, for the same reason the field-presence table of SPEC.md §5.2 is: a description generated from an implementation documents that implementation, including its mistakes, and stops being a second opinion about what the protocol says. The cost of writing it by hand is drift, so drift is what the test guards — `crates/registry-api/tests/openapi.rs` fails when the operations here stop matching the router, or when the problem codes stop matching the catalogue, SPEC.md §9 or the published problem pages.\n\nJSON rather than YAML because this file is served verbatim at `/v1/openapi.json`: there is no build step between what is reviewed here and what a client fetches, and the test reads it with the JSON parser the service already depends on.",
+    "license": {
+      "name": "Apache-2.0",
+      "identifier": "Apache-2.0"
+    },
+    "contact": {
+      "name": "aithos-protocol/registry",
+      "url": "https://github.com/aithos-protocol/registry"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://registry.aithos.world",
+      "description": "The public registry."
+    },
+    {
+      "url": "https://registry-dev.aithos.world",
+      "description": "Development. Writes here are real and equally permanent."
+    }
+  ],
+  "security": [],
+  "externalDocs": {
+    "description": "SPEC.md — the normative rules",
+    "url": "https://github.com/aithos-protocol/registry/blob/main/SPEC.md"
+  },
+  "tags": [
+    {
+      "name": "read",
+      "description": "Anonymous and read-only. Served from the object store behind the CDN, never\nfrom compute — which is why a withdrawn entry answers `404` here and the\nrecord (§7.3) is where its status is stated.\n"
+    },
+    {
+      "name": "write",
+      "description": "Rare, and authorized by a signature over the operation rather than by a\ncredential. Each carries its own signed payload; none accepts an\n`Authorization` header, because there is nothing to put in one.\n"
+    },
+    {
+      "name": "discovery",
+      "description": "What this registry pins, accepts and limits."
+    }
+  ],
+  "paths": {
+    "/v1/registry": {
+      "get": {
+        "tags": [
+          "discovery"
+        ],
+        "operationId": "getManifest",
+        "summary": "What this registry pins, accepts and limits",
+        "description": "The canonical origin, the pinned A2A commit, accepted `alg` values, the\nlimits of §8, the domain certification parameters, and a digest of the\nfield-presence table of §5.2.\n\nThe presence-table digest is the load-bearing member. A2A pins a protocol\ncommit but publishes no table derived from it, so two implementations can\nread the same commit and still disagree about one field — which yields two\ncanonical documents and two signatures over what looks like the same card.\nThe digest turns \"we pinned the same commit\" into something a second\nimplementation can check.\n",
+        "responses": {
+          "200": {
+            "description": "The manifest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Manifest"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/agents": {
+      "get": {
+        "tags": [
+          "read"
+        ],
+        "operationId": "listAgents",
+        "summary": "List entries, newest-updated first",
+        "description": "Cursor-paginated. There is no search, no ranking and no scoring, and\nentries carry no badge of any kind.\n\nTies on `updatedAt` are broken by `agentId`, so the order is total and a\ncursor can neither skip nor repeat an entry. **A client ends a listing on\nan empty page, not on a missing `nextCursor`**: the registry may return a\ncursor whenever the page filled, without knowing whether anything follows.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of entries. Records in a listing carry no `domains` member — an absent member says \"not stated here\", where an empty one would claim there are none.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/CursorInvalid"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "read"
+        ],
+        "operationId": "getAgent",
+        "summary": "The registration record for an entry",
+        "description": "A projection: status, current digest, the authorized key set, timestamps,\ncertified domains and same-origin links. It is a convenience, never a\nsubstitute for verifying the card.\n\nThis is also the only endpoint that distinguishes a withdrawn entry from\none that never existed: it answers `200` with `status: WITHDRAWN`, where\nthe card and key-set paths answer `404` for both.\n",
+        "responses": {
+          "200": {
+            "description": "The record.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRecord"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "write"
+        ],
+        "operationId": "publishAgentCard",
+        "summary": "Publish a card, creating or updating the entry",
+        "description": "`agentId` is client-derived — the RFC 7638 thumbprint of the genesis key —\nso the address is known before anything is published and this operation\nneeds no server-allocated identifier.\n\nThe body carries the card, the public keys that signed it, and **one\npublication proof per key entering the authorized set**: the set of proof\nsigners must equal the set of card signers. A key that signed the card but\nproduced no proof is `UNPROVEN_KEY`.\n\nThat requirement is not bookkeeping. A card's signing payload is public the\nmoment the card is published, so anyone can append a signature to someone\nelse's card without invalidating the original; were one proof enough, an\nattacker could open an entry in their own name whose published key set\nnames a holder who never asked for it.\n\n**Idempotent by construction.** Submitting bytes identical to the current\nversion answers `200` and changes nothing, including the sequence — which\nis exactly what a client retrying after a network timeout does, and its\nearlier write may well have succeeded. Different bytes at the same version\nare still refused by §6.4.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The entry was updated, or the submitted bytes were already the current version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRecord"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The entry was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotAuthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/WriteConflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/Withdrawn"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/TooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "write"
+        ],
+        "operationId": "withdrawAgent",
+        "summary": "Withdraw an entry, permanently",
+        "description": "In V1 because the registry never holds the publisher's key: the publisher\nmust be able to remove their own entry without asking an operator.\n\nThe signed payload names the current `cardDigest`, which is what prevents\nan older withdrawal being replayed.\n\nThe entry becomes `WITHDRAWN`, and the registry stops serving its current\ncard and its JWKS. Published versions remain readable at their digest —\nwhat was published is not erased, only its status changes. The `agentId`\nis never reusable.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WithdrawRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The entry is withdrawn. The record it returns lists no domains.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotAuthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/WriteConflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/Withdrawn"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/agent-card.json": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "read"
+        ],
+        "operationId": "getCurrentCard",
+        "summary": "The current card, as the exact bytes that were signed",
+        "description": "The body is `cardBytes` verbatim. The registry never re-serializes a stored\ncard on read, because a re-serialized card is a different document and its\nsignatures no longer verify.\n\n**`ETag` is opaque**, in the sense of RFC 9110, and a client must not parse\nit as a digest. The API origin happens to derive it from the card digest;\nthe CDN origin serves whatever validator the object store computed — two\norigins, two shapes, one endpoint. A client that needs the digest computes\nit from the bytes it received, which is not a workaround but the only\ncorrect behaviour: a digest handed over by the same server whose answer it\nis meant to check establishes nothing.\n\n**On `404` and `410`.** The API origin distinguishes a withdrawn entry from\nan absent one; the CDN origin, which serves objects the reconciler deletes\non withdrawal, has nothing left to answer `410` from. Consumers MUST treat\n`404` from this path as \"no current card\" without inferring which of the\ntwo it means, and read the record (§7.3) when the difference matters.\n",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfNoneMatch"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The card bytes.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "public, max-age=60"
+                }
+              }
+            },
+            "content": {
+              "application/a2a+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedAgentCard"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Not modified. The comparison is weak, as RFC 9110 §13.1.2 requires for `If-None-Match`."
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "410": {
+            "$ref": "#/components/responses/Withdrawn"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/jwks.json": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "read"
+        ],
+        "operationId": "getJwks",
+        "summary": "The currently authorized public keys",
+        "description": "Each key carries its `kid` — the RFC 7638 thumbprint of that key, matching\nthe `kid` in the `protected` header of any signature it produced.\n\nThe registry rebuilds each entry from the key material it verified rather\nthan republishing the JWK as submitted, so a submitter cannot place a\n`kid`, an `alg` or any other member of their choosing into the published\nset. The only members served are `kty`, `crv`, the coordinates, `kid` and\n`use: \"sig\"`.\n\nA withdrawn entry serves nothing here, with the same `404` shape as the\ncard path.\n",
+        "responses": {
+          "200": {
+            "description": "The authorized key set.",
+            "content": {
+              "application/jwk-set+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Jwks"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "410": {
+            "$ref": "#/components/responses/Withdrawn"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/versions": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "get": {
+        "tags": [
+          "read"
+        ],
+        "operationId": "listVersions",
+        "summary": "The publication history of an entry",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "One page of versions, each addressable at its digest.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/CursorInvalid"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/versions/{cardDigest}/agent-card.json": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        },
+        {
+          "$ref": "#/components/parameters/CardDigest"
+        }
+      ],
+      "get": {
+        "tags": [
+          "read"
+        ],
+        "operationId": "getVersionCard",
+        "summary": "One historical version, by its digest",
+        "description": "Immutable exact bytes. The digest is in the request path, so it never needs\ncarrying in a header, and these responses are cached for a year.\n\nOne version has one URL. `{cardDigest}` must be the exact form the registry\npublishes — `sha256:` then 64 lowercase hex characters — and any other\nspelling, the bare hex included, is `404`: a second spelling would be a\nsecond permanently cached entry for the same bytes, with its own `ETag`.\n",
+        "responses": {
+          "200": {
+            "description": "The card bytes of that version.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string",
+                  "const": "public, max-age=31536000, immutable"
+                }
+              }
+            },
+            "content": {
+              "application/a2a+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignedAgentCard"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/v1/agents/{agentId}/domains": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AgentId"
+        }
+      ],
+      "put": {
+        "tags": [
+          "write"
+        ],
+        "operationId": "certifyDomains",
+        "summary": "Certify the domains an entry owns",
+        "description": "Two assertions, each made where that side actually has authority: the\ndomain speaks in its own DNS zone, and the key speaks by signing. Neither\nhalf alone is accepted — a zone has no authority over someone's key, and a\nsigned request naming `example.com` establishes nothing about\n`example.com`.\n\nThe signed `domains` array is the **complete set**: it replaces whatever\nwas there, and an empty array removes every certification. There is no\nseparate deletion operation, for the same reason there is no rotation\noperation — the request states the whole set, and stating a smaller one is\nhow you shrink it.\n\nThe payload carries no `cardDigest`, unlike a withdrawal: a certification\nis a statement about domains, not about a card, and binding it to a digest\nwould expire every certification at the next publish for no gain.\n\nOnly what the registry can currently observe is published. It re-resolves\nevery requested domain hourly; a domain missing for three consecutive\npasses stops being listed and returns by itself when its record does.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CertifyRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The record, with `domains` showing what the registry observed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "403": {
+            "$ref": "#/components/responses/NotAuthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/WriteConflict"
+          },
+          "410": {
+            "$ref": "#/components/responses/Withdrawn"
+          },
+          "422": {
+            "description": "The request was refused. When a domain's record could not be observed,\nthe problem carries a `domains` member reporting the outcome for each\none, so a publisher learns every missing record at once rather than one\nper attempt.\n",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DomainProblem"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "AgentId": {
+        "name": "agentId",
+        "in": "path",
+        "required": true,
+        "description": "The RFC 7638 thumbprint of the genesis key — 43 base64url characters, computable offline before anything is published.",
+        "schema": {
+          "$ref": "#/components/schemas/AgentId"
+        }
+      },
+      "CardDigest": {
+        "name": "cardDigest",
+        "in": "path",
+        "required": true,
+        "description": "Exactly as the registry publishes it. Any other spelling is `404`.",
+        "schema": {
+          "$ref": "#/components/schemas/Digest"
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Page size. Values outside the range are clamped, not refused.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 25
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "required": false,
+        "description": "Opaque, and belonging to the registry that issued it. One this registry did\nnot issue — or one naming an entry it no longer holds — is\n`400 CURSOR_INVALID`, never silently the first page.\n",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "IfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": false,
+        "description": "The digest of the version this write expects to replace. Comparison is\nstrong, the opposite of the weak comparison `If-None-Match` uses on reads,\nbecause this one guards a write.\n",
+        "schema": {
+          "type": "string"
+        },
+        "example": "\"sha256:0dc224884a76d8bcbf841c01c501d5e94b1abba0ada08d93bd966db897100709\""
+      },
+      "IfNoneMatch": {
+        "name": "If-None-Match",
+        "in": "header",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "headers": {
+      "ETag": {
+        "description": "An opaque validator in the sense of RFC 9110. Clients MUST NOT parse it as a digest.",
+        "schema": {
+          "type": "string"
+        }
+      }
+    },
+    "schemas": {
+      "AgentId": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{43}$",
+        "description": "An RFC 7638 JWK thumbprint, base64url, unpadded.",
+        "examples": [
+          "NTkoUedrnrVKX8n7EZWHpqbeI6klwPejKqcGvirtkgY"
+        ]
+      },
+      "Digest": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$",
+        "description": "`sha256:` followed by 64 lowercase hex characters. The bare hex is not this."
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time",
+        "description": "RFC 3339, UTC, millisecond precision.",
+        "examples": [
+          "2026-09-01T08:44:46.283Z"
+        ]
+      },
+      "Domain": {
+        "type": "string",
+        "format": "hostname",
+        "description": "An A-label, lowercase. Not a public suffix.",
+        "examples": [
+          "acme.com"
+        ]
+      },
+      "Jwk": {
+        "type": "object",
+        "description": "A public JWK. Private members are refused outright with\n`PRIVATE_KEY_SUBMITTED` — the registry has no use for one, and a key\nholder who sent one by accident needs to hear so rather than have it\nquietly accepted.\n",
+        "required": [
+          "kty"
+        ],
+        "properties": {
+          "kty": {
+            "type": "string",
+            "enum": [
+              "EC",
+              "OKP",
+              "RSA"
+            ]
+          },
+          "crv": {
+            "type": "string",
+            "enum": [
+              "P-256",
+              "Ed25519"
+            ]
+          },
+          "x": {
+            "type": "string"
+          },
+          "y": {
+            "type": "string"
+          },
+          "n": {
+            "type": "string"
+          },
+          "e": {
+            "type": "string"
+          },
+          "kid": {
+            "$ref": "#/components/schemas/AgentId"
+          },
+          "use": {
+            "type": "string",
+            "const": "sig"
+          }
+        }
+      },
+      "Jwks": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Jwk"
+            }
+          }
+        }
+      },
+      "Jws": {
+        "type": "object",
+        "description": "A detached JWS in flattened form (RFC 7515). `protected.kid` MUST be the\nRFC 7638 thumbprint of the key that verifies it — that single rule carries\nthe whole authorization design, because the thumbprint is a digest of the\nkey material, so a public key submitted in a plain request body cannot be\nswapped for another.\n",
+        "required": [
+          "protected",
+          "payload",
+          "signature"
+        ],
+        "properties": {
+          "protected": {
+            "type": "string",
+            "description": "`BASE64URL(UTF8(JCS(header)))`. The header carries `alg` and `kid`."
+          },
+          "payload": {
+            "type": "string",
+            "description": "`BASE64URL(UTF8(JCS(payload)))`, verbatim — so a signature can never cover bytes that differ from what the registry reads."
+          },
+          "signature": {
+            "type": "string"
+          }
+        }
+      },
+      "SignedAgentCard": {
+        "type": "object",
+        "description": "A complete A2A AgentCard including its `signatures[]`, pinned to A2A v1.0.1\nat commit `3303592588e388e62e0f69f701af531d2f4e3991`. Parsing is strict:\nRFC 8785 canonicalization, I-JSON, no duplicate members, and the\nfield-presence rules of SPEC.md §5.2 — whose derivation digest is in the\nmanifest.\n",
+        "required": [
+          "name",
+          "description",
+          "version",
+          "url",
+          "signatures"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Self-declared. Nobody checked it, and an interface MUST show the thumbprint rather than this as the identity of an entry."
+          },
+          "description": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "The card's own semver version. A publication must move it strictly forward."
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "signatures": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/Jws"
+            }
+          }
+        },
+        "additionalProperties": true
+      },
+      "PublishRequest": {
+        "type": "object",
+        "required": [
+          "agentCard",
+          "keys",
+          "proofs"
+        ],
+        "properties": {
+          "agentCard": {
+            "$ref": "#/components/schemas/SignedAgentCard"
+          },
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "description": "The public keys that signed the card. Every proof signer must be among them, and no key may appear twice.",
+            "items": {
+              "$ref": "#/components/schemas/Jwk"
+            }
+          },
+          "proofs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "description": "One per key entering the authorized set, each a JWS over a\n`PublishPayload`. On a creation, one proof's `kid` must equal the\n`agentId` — the genesis key names the entry, so the genesis key is what\nasks for the entry to exist. On an update, at least one proof must come\nfrom the current authorized set.\n",
+            "items": {
+              "$ref": "#/components/schemas/PublicationProof"
+            }
+          }
+        }
+      },
+      "PublishPayload": {
+        "type": "object",
+        "description": "The decoded `payload` of a publication proof, exactly. Extra members are\nrefused. `registryOrigin` binds the proof to one registry, so a card and\nits proof cannot be lifted from one and replayed into another.\n",
+        "required": [
+          "action",
+          "agentId",
+          "cardDigest",
+          "issuedAt",
+          "registryOrigin"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "publish"
+          },
+          "agentId": {
+            "$ref": "#/components/schemas/AgentId"
+          },
+          "cardDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "issuedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "registryOrigin": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "WithdrawRequest": {
+        "type": "object",
+        "required": [
+          "withdrawal",
+          "keys"
+        ],
+        "properties": {
+          "withdrawal": {
+            "$ref": "#/components/schemas/Withdrawal"
+          },
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Jwk"
+            }
+          }
+        }
+      },
+      "WithdrawPayload": {
+        "type": "object",
+        "description": "The decoded `payload` of a withdrawal, exactly. `cardDigest` must equal the current version's digest, which is what prevents replay of an older withdrawal.",
+        "required": [
+          "action",
+          "agentId",
+          "cardDigest",
+          "issuedAt",
+          "registryOrigin"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "withdraw"
+          },
+          "agentId": {
+            "$ref": "#/components/schemas/AgentId"
+          },
+          "cardDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "issuedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "registryOrigin": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "CertifyRequest": {
+        "type": "object",
+        "required": [
+          "certification",
+          "keys"
+        ],
+        "properties": {
+          "certification": {
+            "$ref": "#/components/schemas/Certification"
+          },
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "$ref": "#/components/schemas/Jwk"
+            }
+          }
+        }
+      },
+      "CertifyPayload": {
+        "type": "object",
+        "description": "The decoded `payload` of a certification, exactly. Extra members are\nrefused, and `cardDigest` is deliberately absent.\n",
+        "required": [
+          "action",
+          "agentId",
+          "domains",
+          "issuedAt",
+          "registryOrigin"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "certify-domains"
+          },
+          "agentId": {
+            "$ref": "#/components/schemas/AgentId"
+          },
+          "domains": {
+            "type": "array",
+            "maxItems": 8,
+            "description": "Sorted in ascending code-point order, with no duplicate. JCS orders\nobject members but not array elements, so array order is signed as\nsubmitted; requiring one order makes the payload a deterministic\nfunction of the set. An unsorted or duplicated array is\n`DOMAINS_NOT_CANONICAL`. An empty array removes every certification.\n",
+            "items": {
+              "$ref": "#/components/schemas/Domain"
+            }
+          },
+          "issuedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "registryOrigin": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "CertifiedDomain": {
+        "type": "object",
+        "required": [
+          "domain",
+          "certifiedAt",
+          "lastCheckedAt"
+        ],
+        "properties": {
+          "domain": {
+            "$ref": "#/components/schemas/Domain"
+          },
+          "certifiedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ],
+            "description": "First observation in the current continuous run."
+          },
+          "lastCheckedAt": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              }
+            ],
+            "description": "Most recent successful observation."
+          }
+        }
+      },
+      "AgentRecord": {
+        "type": "object",
+        "description": "A projection of registration facts, and nothing about whether the thing at\nthis address is honest. The card's self-declared `name` and endpoints are\nnot repeated here.\n",
+        "required": [
+          "agentId",
+          "status",
+          "seq",
+          "cardDigest",
+          "cardVersion",
+          "authorizedKids",
+          "createdAt",
+          "updatedAt",
+          "agentCardUrl",
+          "jwksUrl"
+        ],
+        "properties": {
+          "agentId": {
+            "$ref": "#/components/schemas/AgentId"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ACTIVE",
+              "WITHDRAWN"
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Registry-assigned, strictly increasing from 1."
+          },
+          "cardDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "cardVersion": {
+            "type": "string",
+            "description": "The A2A card's own version field."
+          },
+          "authorizedKids": {
+            "type": "array",
+            "description": "The current authorized set — the keys that signed the current version. Rotation is the choice of which keys sign; there is no rotation operation.",
+            "items": {
+              "$ref": "#/components/schemas/AgentId"
+            }
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "agentCardUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "jwksUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "domains": {
+            "type": "array",
+            "description": "What the registry can currently observe, sorted — never what was once\nrequested. **Absent rather than empty** where the registry is not\nstating it, as in a listing: an absent member says \"not stated here\",\nwhere an empty one would claim there are none.\n",
+            "items": {
+              "$ref": "#/components/schemas/CertifiedDomain"
+            }
+          }
+        }
+      },
+      "AgentPage": {
+        "type": "object",
+        "required": [
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentRecord"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "May be present on a full page even when nothing follows. End on an empty page, not on its absence."
+          }
+        }
+      },
+      "VersionSummary": {
+        "type": "object",
+        "required": [
+          "seq",
+          "cardDigest",
+          "cardVersion",
+          "signingKids",
+          "createdAt",
+          "agentCardUrl"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "cardDigest": {
+            "$ref": "#/components/schemas/Digest"
+          },
+          "cardVersion": {
+            "type": "string"
+          },
+          "signingKids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentId"
+            }
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "agentCardUrl": {
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      },
+      "VersionPage": {
+        "type": "object",
+        "required": [
+          "versions"
+        ],
+        "properties": {
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionSummary"
+            }
+          },
+          "nextCursor": {
+            "type": "string"
+          }
+        }
+      },
+      "Manifest": {
+        "type": "object",
+        "required": [
+          "origin",
+          "a2a",
+          "canonicalization",
+          "signatures",
+          "keyIdentifiers",
+          "limits",
+          "presenceTable",
+          "testVectors",
+          "claim",
+          "documentation"
+        ],
+        "properties": {
+          "origin": {
+            "type": "string",
+            "format": "uri"
+          },
+          "documentation": {
+            "type": "object",
+            "description": "Where this surface is described, and where the `type` URI of every problem document resolves. Both are static objects on this origin: a client that found the registry can reach its documentation without being told a second hostname.",
+            "properties": {
+              "openapi": {
+                "type": "string",
+                "format": "uri"
+              },
+              "problems": {
+                "type": "string",
+                "format": "uri"
+              }
+            }
+          },
+          "claim": {
+            "type": "string",
+            "description": "What an entry in this registry states, in one sentence — and what it does not."
+          },
+          "a2a": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string"
+              },
+              "commit": {
+                "type": "string"
+              }
+            }
+          },
+          "canonicalization": {
+            "type": "string",
+            "const": "RFC 8785"
+          },
+          "keyIdentifiers": {
+            "type": "string",
+            "const": "RFC 7638"
+          },
+          "signatures": {
+            "type": "object",
+            "properties": {
+              "format": {
+                "type": "string",
+                "const": "RFC 7515"
+              },
+              "algorithms": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "ES256",
+                    "EdDSA",
+                    "RS256"
+                  ]
+                }
+              }
+            }
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "requestBodyBytes": {
+                "type": "integer"
+              },
+              "cardBytes": {
+                "type": "integer"
+              },
+              "keysPerRequest": {
+                "type": "integer"
+              },
+              "signaturesPerCard": {
+                "type": "integer"
+              },
+              "validationIssuesReported": {
+                "type": "integer"
+              }
+            }
+          },
+          "presenceTable": {
+            "type": "object",
+            "description": "A digest of the field-presence table of §5.2, and what it was derived from.",
+            "properties": {
+              "derivedFrom": {
+                "type": "string"
+              },
+              "digest": {
+                "$ref": "#/components/schemas/Digest"
+              }
+            }
+          },
+          "domainCertification": {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "string",
+                "const": "A2A1"
+              },
+              "record": {
+                "type": "string",
+                "const": "_a2a"
+              },
+              "maxDomains": {
+                "type": "integer"
+              },
+              "revalidateIntervalSeconds": {
+                "type": "integer"
+              },
+              "removalAfterFailedPasses": {
+                "type": "integer"
+              },
+              "profile": {
+                "type": "string"
+              }
+            }
+          },
+          "testVectors": {
+            "type": "object",
+            "properties": {
+              "repository": {
+                "type": "string",
+                "format": "uri"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "Problem": {
+        "type": "object",
+        "description": "RFC 9457. Every refusal the registry makes is one, including refusals made\nbefore a handler runs — a body stopped by the size limit, a malformed query\nparameter, an unroutable path.\n\nTwo refusals carry no `code` and must be handled by status alone: a `429`\nfrom the gateway's own throughput limit, and a `403` from the edge for a\nmethod a cached read path does not serve. A rate block carries every member\nof a problem document but the media type `application/json`, because the\nedge firewall's body types do not include `application/problem+json`.\n",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code",
+          "detail"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri-reference",
+            "description": "Dereferences to human-readable documentation for the code: `/problems/{code}`, lowercased with `-` for `_`.",
+            "examples": [
+              "/problems/withdrawn"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "code": {
+            "$ref": "#/components/schemas/ProblemCode"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string",
+            "description": "An RFC 6901 JSON Pointer to the offending member, so a client can highlight it rather than being told the card is invalid."
+          }
+        }
+      },
+      "DomainProblem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Problem"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "domains": {
+                "type": "array",
+                "description": "The outcome per domain, so a publisher learns every missing record at once.",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "domain": {
+                      "$ref": "#/components/schemas/Domain"
+                    },
+                    "outcome": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ProblemCode": {
+        "type": "string",
+        "enum": [
+          "JSON_INVALID",
+          "PRIVATE_KEY_SUBMITTED",
+          "NOT_AUTHORIZED_KEY",
+          "NOT_FOUND",
+          "AGENT_ID_MISMATCH",
+          "VERSION_NOT_INCREASING",
+          "WITHDRAWN",
+          "PRECONDITION_FAILED",
+          "CARD_TOO_LARGE",
+          "CARD_INVALID",
+          "PRESENCE_INVALID",
+          "SIGNATURE_INVALID",
+          "KID_NOT_THUMBPRINT",
+          "ALG_NOT_ALLOWED",
+          "UNUSED_KEY",
+          "TOO_MANY_KEYS",
+          "DUPLICATE_KEY",
+          "KEY_INVALID",
+          "UNPROVEN_KEY",
+          "CURSOR_INVALID",
+          "CONFLICT",
+          "METHOD_NOT_ALLOWED",
+          "INTERNAL",
+          "RATE_LIMITED",
+          "FORBIDDEN",
+          "REQUEST_REFUSED",
+          "DOMAIN_SYNTAX_INVALID",
+          "DOMAIN_IS_PUBLIC_SUFFIX",
+          "DOMAINS_NOT_CANONICAL",
+          "TOO_MANY_DOMAINS",
+          "CERTIFICATION_NOT_INCREASING",
+          "DNS_RECORD_ABSENT",
+          "DNS_UNRESOLVED"
+        ]
+      },
+      "PublicationProof": {
+        "description": "A JWS whose payload asks this registry to publish this card under this identifier.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Jws"
+          }
+        ],
+        "properties": {
+          "payload": {
+            "type": "string",
+            "contentEncoding": "base64url",
+            "contentMediaType": "application/json",
+            "contentSchema": {
+              "$ref": "#/components/schemas/PublishPayload"
+            }
+          }
+        }
+      },
+      "Withdrawal": {
+        "description": "A JWS whose payload asks this registry to withdraw this entry.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Jws"
+          }
+        ],
+        "properties": {
+          "payload": {
+            "type": "string",
+            "contentEncoding": "base64url",
+            "contentMediaType": "application/json",
+            "contentSchema": {
+              "$ref": "#/components/schemas/WithdrawPayload"
+            }
+          }
+        }
+      },
+      "Certification": {
+        "description": "A JWS whose payload states the complete set of domains to certify.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Jws"
+          }
+        ],
+        "properties": {
+          "payload": {
+            "type": "string",
+            "contentEncoding": "base64url",
+            "contentMediaType": "application/json",
+            "contentSchema": {
+              "$ref": "#/components/schemas/CertifyPayload"
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "`JSON_INVALID`, or `PRIVATE_KEY_SUBMITTED`.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "NotAuthorized": {
+        "description": "`NOT_AUTHORIZED_KEY` — no signature by a currently authorized key.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "`NOT_FOUND`. On the card and key-set paths this may also mean withdrawn; the record says which.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Withdrawn": {
+        "description": "`WITHDRAWN` — the entry was withdrawn by its key holder, and the identifier is never reusable.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "WriteConflict": {
+        "description": "`AGENT_ID_MISMATCH`, `VERSION_NOT_INCREASING`, `CERTIFICATION_NOT_INCREASING`, or `CONFLICT` — a concurrent write changed the entry first.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "PreconditionFailed": {
+        "description": "`PRECONDITION_FAILED` — `If-Match` did not match the current digest.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "TooLarge": {
+        "description": "`CARD_TOO_LARGE`. Checked before the body is parsed, and so before any signature is verified.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "Unprocessable": {
+        "description": "The request was well formed and refused on its content — a signature, a key, or the card itself.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "CursorInvalid": {
+        "description": "`CURSOR_INVALID` — the cursor did not come from this registry. Never silently the first page.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      },
+      "RateLimited": {
+        "description": "`RATE_LIMITED`, per source address and per `agentId`. Carries every member\nof a problem document, but with media type `application/json`: the edge\nfirewall refuses a header overriding the content type. A client keying on\n`code` reads it; one keying on the media type alone does not.\n",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    }
+  }
+}

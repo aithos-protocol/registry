@@ -687,6 +687,15 @@ async fn manifest(State(state): State<AppState>) -> Response {
             "removalAfterFailedPasses": 3,
             "profile": "DOMAIN-CERTIFICATION.md, in the repository named by testVectors",
         },
+        // Where the description of this surface is, and where the `type` URI
+        // of every problem document resolves. Both are static objects on this
+        // origin rather than links off it: a client that found the registry
+        // can reach its documentation without being told a second hostname,
+        // and a hostname that has to be told is one that can rot separately.
+        "documentation": {
+            "openapi": format!("{}/v1/openapi.json", state.config.origin),
+            "problems": format!("{}/problems/", state.config.origin),
+        },
         "claim": "An entry states that its Agent Card was published by the holder of a \
                   key, and that every version since was signed by a key authorized by \
                   that lineage. It is not a claim about any domain or organization.",

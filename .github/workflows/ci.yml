@@ -115,6 +115,20 @@ jobs:
           path: target/lambda/registry.zip
           retention-days: 90
 
+  # `openapi.json` is checked twice, and the two checks catch different things.
+  # The Rust suite checks it against this repository — the router, the problem
+  # catalogue, the specification tables. This checks it against the OpenAPI
+  # specification itself, which is what the client generators and the request
+  # collections downstream of it will assume. The first run of this job found
+  # two descriptions that a comma had silently turned into extra members.
+  openapi:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      # Pinned, like every other tool here: a linter that updates itself turns
+      # somebody else's new rule into this repository's red build.
+      - run: npx --yes @redocly/cli@2.50.0 lint openapi.json
+
   terraform:
     runs-on: ubuntu-latest
     defaults:
