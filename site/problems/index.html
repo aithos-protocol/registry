@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Problem types — Aithos Registry</title><style>:root{color-scheme:light dark;--fg:#16181d;--dim:#5b6270;--bg:#fbfbfa;--card:#fff;--line:#e4e4e1;--accent:#8a3d1e}@media(prefers-color-scheme:dark){:root{--fg:#e8e8e6;--dim:#9aa1ae;--bg:#16181d;--card:#1d2027;--line:#2c313a;--accent:#e0a080}}*{box-sizing:border-box}body{margin:0;padding:3rem 1.25rem;background:var(--bg);color:var(--fg);font:16px/1.65 ui-sans-serif,-apple-system,Segoe UI,Roboto,sans-serif}main{max-width:44rem;margin:0 auto}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em;background:var(--card);border:1px solid var(--line);border-radius:4px;padding:.1em .35em}.status{display:inline-block;font-family:ui-monospace,monospace;font-size:.8rem;letter-spacing:.04em;color:var(--accent);border:1px solid var(--line);border-radius:999px;padding:.15rem .6rem;background:var(--card)}h1{font-size:1.55rem;line-height:1.25;margin:.9rem 0 .3rem;font-weight:620}h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);margin:2rem 0 .4rem;font-weight:600}p{margin:.4rem 0}.code{font-family:ui-monospace,monospace;color:var(--dim);font-size:.92rem;margin:0}footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--line);color:var(--dim);font-size:.88rem}a{color:inherit;text-decoration-color:var(--line);text-underline-offset:3px}a:hover{text-decoration-color:var(--accent)}ul{padding-left:0;list-style:none;margin:.5rem 0}li{padding:.5rem 0;border-bottom:1px solid var(--line)}li a{font-family:ui-monospace,monospace;font-size:.92rem}li span{color:var(--dim);font-size:.9rem}</style></head>
+<body><main>
+<h1>Problem types</h1>
+<p>Every refusal this registry makes is an <a href="https://datatracker.ietf.org/doc/html/rfc9457">RFC 9457</a> document carrying one of these codes, and its <code>type</code> member links to the page below.</p>
+<p>Two refusals carry no code and must be handled by status alone: a <code>429</code> from the gateway's own throughput limit, and a <code>403</code> from the edge for a method a cached read path does not serve.</p>
+<ul>
+<li><a href="/problems/json-invalid">JSON_INVALID</a> <span>· 400 · Invalid JSON</span></li>
+<li><a href="/problems/private-key-submitted">PRIVATE_KEY_SUBMITTED</a> <span>· 400 · Private key material submitted</span></li>
+<li><a href="/problems/not-authorized-key">NOT_AUTHORIZED_KEY</a> <span>· 403 · Not signed by an authorized key</span></li>
+<li><a href="/problems/not-found">NOT_FOUND</a> <span>· 404 · Not found</span></li>
+<li><a href="/problems/agent-id-mismatch">AGENT_ID_MISMATCH</a> <span>· 409 · Identifier does not match the signing key</span></li>
+<li><a href="/problems/version-not-increasing">VERSION_NOT_INCREASING</a> <span>· 409 · Card version does not move forward</span></li>
+<li><a href="/problems/withdrawn">WITHDRAWN</a> <span>· 410 · Entry was withdrawn</span></li>
+<li><a href="/problems/precondition-failed">PRECONDITION_FAILED</a> <span>· 412 · Precondition failed</span></li>
+<li><a href="/problems/card-too-large">CARD_TOO_LARGE</a> <span>· 413 · Agent Card is too large</span></li>
+<li><a href="/problems/card-invalid">CARD_INVALID</a> <span>· 422 · Agent Card is invalid</span></li>
+<li><a href="/problems/presence-invalid">PRESENCE_INVALID</a> <span>· 422 · Field presence rules were not applied</span></li>
+<li><a href="/problems/signature-invalid">SIGNATURE_INVALID</a> <span>· 422 · Signature is invalid</span></li>
+<li><a href="/problems/kid-not-thumbprint">KID_NOT_THUMBPRINT</a> <span>· 422 · Key identifier is not the key's thumbprint</span></li>
+<li><a href="/problems/alg-not-allowed">ALG_NOT_ALLOWED</a> <span>· 422 · Algorithm is not allowed</span></li>
+<li><a href="/problems/unused-key">UNUSED_KEY</a> <span>· 422 · A submitted key signs nothing</span></li>
+<li><a href="/problems/too-many-keys">TOO_MANY_KEYS</a> <span>· 422 · Too many keys submitted</span></li>
+<li><a href="/problems/duplicate-key">DUPLICATE_KEY</a> <span>· 422 · The same key was submitted twice</span></li>
+<li><a href="/problems/key-invalid">KEY_INVALID</a> <span>· 422 · A submitted key is malformed</span></li>
+<li><a href="/problems/unproven-key">UNPROVEN_KEY</a> <span>· 422 · A signing key did not ask for this publication</span></li>
+<li><a href="/problems/cursor-invalid">CURSOR_INVALID</a> <span>· 400 · Pagination cursor is not valid</span></li>
+<li><a href="/problems/conflict">CONFLICT</a> <span>· 409 · The agent changed concurrently</span></li>
+<li><a href="/problems/method-not-allowed">METHOD_NOT_ALLOWED</a> <span>· 405 · Method not allowed</span></li>
+<li><a href="/problems/internal">INTERNAL</a> <span>· 500 · The registry could not complete this request</span></li>
+<li><a href="/problems/rate-limited">RATE_LIMITED</a> <span>· 429 · Too many requests</span></li>
+<li><a href="/problems/forbidden">FORBIDDEN</a> <span>· 403 · Not reachable this way</span></li>
+<li><a href="/problems/request-refused">REQUEST_REFUSED</a> <span>· 400 · Request refused</span></li>
+<li><a href="/problems/domain-syntax-invalid">DOMAIN_SYNTAX_INVALID</a> <span>· 422 · Domain syntax is invalid</span></li>
+<li><a href="/problems/domain-is-public-suffix">DOMAIN_IS_PUBLIC_SUFFIX</a> <span>· 422 · Domain is a public suffix</span></li>
+<li><a href="/problems/domains-not-canonical">DOMAINS_NOT_CANONICAL</a> <span>· 422 · Domain list is not sorted</span></li>
+<li><a href="/problems/too-many-domains">TOO_MANY_DOMAINS</a> <span>· 422 · Too many domains</span></li>
+<li><a href="/problems/certification-not-increasing">CERTIFICATION_NOT_INCREASING</a> <span>· 409 · Certification does not move forward</span></li>
+<li><a href="/problems/dns-record-absent">DNS_RECORD_ABSENT</a> <span>· 422 · DNS record absent</span></li>
+<li><a href="/problems/dns-unresolved">DNS_UNRESOLVED</a> <span>· 422 · DNS resolution failed</span></li>
+</ul>
+<footer>Normative in <a href="https://github.com/aithos-protocol/registry/blob/main/SPEC.md">SPEC.md</a> §9 and <a href="https://github.com/aithos-protocol/registry/blob/main/DOMAIN-CERTIFICATION.md">DOMAIN-CERTIFICATION.md</a> §11. The HTTP surface is described by <a href="/v1/openapi.json">openapi.json</a>.</footer>
+</main></body></html>

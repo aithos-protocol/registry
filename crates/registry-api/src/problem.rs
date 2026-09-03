@@ -50,46 +50,15 @@ impl Problem {
         Self::new(404, "NOT_FOUND", "no such agent in this registry")
     }
 
+    /// The `title` member, from the catalogue.
+    ///
+    /// This was a `match` repeating every code, which is how the codes the
+    /// layers around the handlers produce ended up with no arm and all read
+    /// "Request rejected" — the one field of a problem document a human sees
+    /// first, saying nothing. One list, checked against the specification by
+    /// `tests/openapi.rs`, cannot drift that way again.
     fn title(&self) -> &'static str {
-        match self.code {
-            "JSON_INVALID" => "Invalid JSON",
-            "PRIVATE_KEY_SUBMITTED" => "Private key material submitted",
-            "NOT_AUTHORIZED_KEY" => "Not signed by an authorized key",
-            "NOT_FOUND" => "Not found",
-            "AGENT_ID_MISMATCH" => "Identifier does not match the signing key",
-            "VERSION_NOT_INCREASING" => "Card version does not move forward",
-            "WITHDRAWN" => "Entry was withdrawn",
-            "PRECONDITION_FAILED" => "Precondition failed",
-            "CARD_TOO_LARGE" => "Agent Card is too large",
-            "CARD_INVALID" => "Agent Card is invalid",
-            "PRESENCE_INVALID" => "Field presence rules were not applied",
-            "SIGNATURE_INVALID" => "Signature is invalid",
-            "KID_NOT_THUMBPRINT" => "Key identifier is not the key's thumbprint",
-            "ALG_NOT_ALLOWED" => "Algorithm is not allowed",
-            "UNUSED_KEY" => "A submitted key signs nothing",
-            "TOO_MANY_KEYS" => "Too many keys submitted",
-            "DUPLICATE_KEY" => "The same key was submitted twice",
-            "KEY_INVALID" => "A submitted key is malformed",
-            "UNPROVEN_KEY" => "A signing key did not ask for this publication",
-            "DOMAIN_SYNTAX_INVALID" => "Domain syntax is invalid",
-            "DOMAIN_IS_PUBLIC_SUFFIX" => "Domain is a public suffix",
-            "DOMAINS_NOT_CANONICAL" => "Domain list is not sorted",
-            "TOO_MANY_DOMAINS" => "Too many domains",
-            "CERTIFICATION_NOT_INCREASING" => "Certification does not move forward",
-            "DNS_RECORD_ABSENT" => "DNS record absent",
-            "DNS_UNRESOLVED" => "DNS resolution failed",
-            // Codes produced by the layers around the handlers, which had no
-            // arm here and so all read "Request rejected" — the one field of a
-            // problem document a human sees first, saying nothing.
-            "METHOD_NOT_ALLOWED" => "Method not allowed",
-            "RATE_LIMITED" => "Too many requests",
-            "FORBIDDEN" => "Not reachable this way",
-            "INTERNAL" => "The registry could not complete this request",
-            "REQUEST_REFUSED" => "Request refused",
-            "CONFLICT" => "The agent changed concurrently",
-            "CURSOR_INVALID" => "Pagination cursor is not valid",
-            _ => "Request rejected",
-        }
+        crate::catalog::lookup(self.code).map_or("Request rejected", |d| d.title)
     }
 
     /// The kebab-case slug used in the problem `type` URI.
