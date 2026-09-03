@@ -50,10 +50,13 @@ jobs:
           # copy the registry serves is the one to point a client at.
           cp openapi.json _site/openapi.json
 
-      # `enablement` turns Pages on the first time this runs, so the site does
-      # not depend on a setting somebody has to remember to flip — and a
-      # workflow that fails only because of an unset checkbox teaches nobody
-      # anything.
+      # Pages has to be enabled once by hand, in Settings, with the source set
+      # to GitHub Actions. `enablement` asks this step to do it instead, and it
+      # cannot: creating a Pages site needs the repository's administration
+      # permission, which a workflow token is never granted and which a
+      # fine-grained token does not carry either. It is left set because it
+      # costs nothing once the site exists — this comment is here so the next
+      # person reads it rather than rediscovering the 403.
       - uses: actions/configure-pages@v5
         with:
           enablement: true
