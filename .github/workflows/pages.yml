@@ -1,0 +1,64 @@
+# Publish the rendered API reference to GitHub Pages.
+#
+# The checkable artifact is `openapi.json`, served by the registry itself at
+# `/v1/openapi.json` and deployed with it. This is the readable one, and it is
+# deliberately somewhere else: a rendered page is iterated on — wording, layout,
+# what to put first — and none of that should require a production deployment of
+# the registry to try.
+#
+# The description is inlined into the page at build time, so what is published
+# here cannot drift from the commit that built it.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - openapi.json
+      - .github/workflows/pages.yml
+  # So a rendering change can be published without waiting for the next commit
+  # that happens to touch the description.
+  workflow_dispatch:
+
+# Read the repository, write the Pages deployment, and nothing else.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one in flight: a half-replaced
+# site is worse than a stale one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Render the reference
+        run: |
+          mkdir -p _site
+          npx --yes @redocly/cli@2.50.0 build-docs openapi.json -o _site/index.html
+          # Also served here, so a reader who wants the description rather than
+          # the rendering does not have to know the registry's hostname. The
+          # copy the registry serves is the one to point a client at.
+          cp openapi.json _site/openapi.json
+
+      # `enablement` turns Pages on the first time this runs, so the site does
+      # not depend on a setting somebody has to remember to flip — and a
+      # workflow that fails only because of an unset checkbox teaches nobody
+      # anything.
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
