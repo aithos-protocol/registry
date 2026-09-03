@@ -232,6 +232,36 @@ resource "aws_cloudfront_distribution" "registry" {
     compress               = true
   }
 
+  # The two documentation paths, both static objects. Declared before the
+  # `/errors/*` behaviour only for reading order; neither pattern can collide
+  # with anything above, since no agent path contains `/problems/` and no agent
+  # is named `openapi.json`.
+  #
+  # `/v1/openapi.json` needs a behaviour of its own: without one it falls to the
+  # default, which is the API, which has no such route — the document would be
+  # answered by a Lambda with a 404.
+  ordered_cache_behavior {
+    path_pattern           = "/v1/openapi.json"
+    target_origin_id       = local.s3_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.optimized.id
+    compress               = true
+  }
+
+  # `*` matches across slashes and also matches nothing, so this one pattern
+  # covers `/problems/withdrawn` and `/problems/` alike.
+  ordered_cache_behavior {
+    path_pattern           = "/problems/*"
+    target_origin_id       = local.s3_origin
+    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    cache_policy_id        = data.aws_cloudfront_cache_policy.optimized.id
+    compress               = true
+  }
+
   # The custom error page below is fetched through this same behaviour table —
   # it is an ordinary request, not a special case — so without this behaviour it
   # would fall to the default one and be requested from the API, which has no

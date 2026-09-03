@@ -162,6 +162,65 @@ resource "aws_s3_object" "not_found" {
   })
 }
 
+# --- the published documentation ---------------------------------------------
+#
+# Both of these are static documents served from the object store, for the same
+# reason the card path is: they change on deploy and never per request, so
+# answering them from compute would put a Lambda invocation behind every reader
+# of an error message. They are committed to the repository and uploaded from
+# it, rather than generated here, so what is served is what was reviewed —
+# `crates/registry-api/tests/openapi.rs` is what fails when the files stop
+# matching the catalogue they came from.
+
+# The description of the HTTP surface. `/v1/openapi.json` and not `/openapi.json`
+# because it describes v1: a second major version would describe itself, at its
+# own path, without either document having to say which one is current.
+resource "aws_s3_object" "openapi" {
+  bucket        = aws_s3_bucket.registry.id
+  key           = "v1/openapi.json"
+  content_type  = "application/json"
+  source        = "${path.module}/../openapi.json"
+  etag          = filemd5("${path.module}/../openapi.json")
+  cache_control = "public, max-age=300"
+}
+
+# One page per problem code. RFC 9457 §3.1.1 says the `type` URI a problem
+# document carries should, dereferenced, give human-readable documentation for
+# the code — and until these existed it resolved to 404, which is the one place
+# the API already promised documentation and the one place it had none.
+#
+# The keys carry no extension because the `type` member names them without one:
+# a document served at a different path from the one the API points at is not
+# documentation of anything.
+resource "aws_s3_object" "problem_page" {
+  for_each = toset([
+    for name in fileset("${path.module}/../site/problems", "*") : name
+    if name != "index.html"
+  ])
+
+  bucket        = aws_s3_bucket.registry.id
+  key           = "problems/${each.value}"
+  content_type  = "text/html; charset=utf-8"
+  source        = "${path.module}/../site/problems/${each.value}"
+  etag          = filemd5("${path.module}/../site/problems/${each.value}")
+  cache_control = "public, max-age=300"
+}
+
+# The index, at both spellings a reader might arrive by. S3 is a key-value store
+# reached through CloudFront's REST origin, which resolves no index document, so
+# `/problems/` is served by an object whose key literally ends in a slash. Both
+# come from one file, so the pair cannot disagree.
+resource "aws_s3_object" "problem_index" {
+  for_each = toset(["problems/", "problems/index.html"])
+
+  bucket        = aws_s3_bucket.registry.id
+  key           = each.value
+  content_type  = "text/html; charset=utf-8"
+  source        = "${path.module}/../site/problems/index.html"
+  etag          = filemd5("${path.module}/../site/problems/index.html")
+  cache_control = "public, max-age=300"
+}
+
 # --- DynamoDB: agent state ---------------------------------------------------
 
 resource "aws_dynamodb_table" "registry" {
