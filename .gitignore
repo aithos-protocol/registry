@@ -13,3 +13,8 @@ target/
 
 # Staging for files the mount will not let us delete.
 _to_delete/
+
+# `aithos card init` writes this into the working directory, and the tests sign
+# it against dev with a throwaway key. It is somebody's scratch file, never this
+# repository's content.
+agent-card.json
