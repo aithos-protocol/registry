@@ -32,3 +32,7 @@ Everything else: `aithos --help`
 
 The trust standards around Agent Cards (AI Catalog, A2A discovery) aren't released yet.
 We'll switch when they are. The migration is ready on the [`sdk-card-authoring`](https://github.com/aithos-protocol/registry/tree/sdk-card-authoring) branch.
+
+## Vision
+
+Aithos is building the trust layer for AI agents. Want to shape it? **[Become a design partner →](https://agents.aithos.world/?ref=github)**
