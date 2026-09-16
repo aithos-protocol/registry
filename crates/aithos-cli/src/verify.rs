@@ -251,8 +251,12 @@ mod tests {
     #[test]
     fn a_signature_verifies_against_a_key_supplied_out_of_band() {
         let key = PrivateKey::generate();
-        let signed =
-            card::sign(&card::scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let signed = card::sign(
+            &card::scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            None,
+        )
+        .unwrap();
 
         let report = verify(&signed, &trusted(&key)).unwrap();
         assert!(report.verified_against_trusted_key());
@@ -263,8 +267,12 @@ mod tests {
     #[test]
     fn a_tampered_card_does_not_verify() {
         let key = PrivateKey::generate();
-        let signed =
-            card::sign(&card::scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let signed = card::sign(
+            &card::scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            None,
+        )
+        .unwrap();
 
         let mut tampered = signed.value.clone();
         tampered["name"] = serde_json::json!("Impostor");
@@ -279,8 +287,12 @@ mod tests {
     #[test]
     fn an_unresolvable_key_is_a_failure_not_a_silence() {
         let key = PrivateKey::generate();
-        let signed =
-            card::sign(&card::scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let signed = card::sign(
+            &card::scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            None,
+        )
+        .unwrap();
 
         let report = verify(&signed, &BTreeMap::new()).unwrap();
         assert!(!report.any_verified());
@@ -302,7 +314,7 @@ mod tests {
         let attacker = PrivateKey::generate();
         let unrelated = PrivateKey::generate();
         let card = card::sign(
-            &card::scaffold("A", "https://a.example/x"),
+            &card::scaffold("A", "https://a.example/x").unwrap(),
             &[&attacker],
             Some("https://attacker.example/jwks.json"),
         )

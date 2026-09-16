@@ -14,36 +14,20 @@ record in each domain's own DNS zone.
 📖 **[Documentation](https://aithos-protocol.github.io/registry/)** —
 [`SPEC.md`](SPEC.md) holds the normative rules.
 
-## Why this does not use the official A2A SDK yet
+## Cards built with the official A2A SDK (this branch)
 
-Cards are handled here by [`crates/a2a-card`](crates/a2a-card): strict parsing,
-the A2A §8.4.1 field-presence table, RFC 8785 canonicalization and JWS
-verification. `aithos card init` writes its template directly, not through
-[`a2a-rs`](https://github.com/a2aproject/a2a-rs), the official Rust SDK.
+On this branch, `aithos card init` and `aithos publish --bump` build and edit
+cards with [`a2a-rs`](https://github.com/a2aproject/a2a-rs), the official A2A
+Rust SDK. The SDK's types are the model, and its proto-generated JSON layer is
+the encoder. [`crates/a2a-card`](crates/a2a-card) restores the A2A §8.4.1
+required fields that encoder omits, and still owns strict parsing,
+canonicalization and signatures, which no SDK provides. `aithos card check`
+also says whether the official SDK can read a card exactly.
 
-That is a matter of timing. What sits around a card — how its signer is
-identified and how that is verified — is being standardized right now, and none
-of it is released:
-
-- **AI Catalog** is rewriting its Trust Manifest. Signatures are being bound to
-  the artifact release and the verification profile is narrowing to `did:web`
-  ([#108](https://github.com/Agent-Card/ai-catalog/pull/108)–[#110](https://github.com/Agent-Card/ai-catalog/pull/110),
-  targeted at 0.9 RC). A draft also reshapes manifests and signatures again
-  ([#117](https://github.com/Agent-Card/ai-catalog/pull/117)).
-- **A2A** is moving agent discovery onto AI Catalog
-  ([A2A #2230](https://github.com/a2aproject/A2A/pull/2230)).
-
-No SDK implements card signing or trust today. Adopting one now would only move
-card authoring, and would mean a second migration once those releases land.
-
-The migration is ready on the
-[`sdk-card-authoring`](https://github.com/aithos-protocol/registry/tree/sdk-card-authoring)
-branch. There, cards are built with the SDK's types and encoded by its
-proto-generated JSON layer; `a2a-card` restores the §8.4.1 required fields
-that encoder omits, and still owns canonicalization and signatures. The plan,
-the measurements and the SDK gaps found on the way are in
-[`docs/tasks/author-cards-with-a2a-sdk.md`](https://github.com/aithos-protocol/registry/blob/sdk-card-authoring/docs/tasks/author-cards-with-a2a-sdk.md)
-on that branch.
+`main` does not carry this yet. It waits for the trust releases the `main`
+README describes: the AI Catalog Trust Manifest rework and A2A discovery on AI
+Catalog. The plan, the measurements and the SDK gaps found on the way are in
+[`docs/tasks/author-cards-with-a2a-sdk.md`](docs/tasks/author-cards-with-a2a-sdk.md).
 
 ## Quickstart with the CLI
 
@@ -84,7 +68,7 @@ prints the line to paste into it and sends nothing.
 | `aithos key new` | Generate a key. Its thumbprint is the address of any entry it creates, so you know the address before publishing anything. |
 | `aithos key ls` | List the keys on this machine. |
 | `aithos card init` | Write a minimal card that already satisfies the strict A2A profile. |
-| `aithos card check <file>` | Validate a card locally, without publishing it. |
+| `aithos card check <file>` | Validate a card locally, without publishing it, and report whether the official A2A SDK reads it exactly. |
 | `aithos publish <file> --key <kid>` | Sign a card and publish it. `--bump major\|minor\|patch` raises the version; `--offline` signs without contacting anything; `--key` repeats to authorize several keys. |
 | `aithos certify <kid> --key <kid> --domains <list>` | Certify domains: each zone declares the agent, and a key holder signs the request. |
 | `aithos whatis <kid>` | Look up what the registry holds at an address, the way `whois` does. |

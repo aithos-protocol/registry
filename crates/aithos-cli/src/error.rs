@@ -41,6 +41,15 @@ impl From<a2a_card::CardError> for Error {
     }
 }
 
+impl From<a2a_card_sdk::Error> for Error {
+    fn from(e: a2a_card_sdk::Error) -> Self {
+        match e {
+            a2a_card_sdk::Error::Card(c) => c.into(),
+            other => Error(other.to_string()),
+        }
+    }
+}
+
 impl From<registry_core::RegistryError> for Error {
     fn from(e: registry_core::RegistryError) -> Self {
         Error(e.to_string())

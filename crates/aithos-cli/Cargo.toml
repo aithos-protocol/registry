@@ -24,6 +24,7 @@ path = "src/main.rs"
 [dependencies]
 time = { workspace = true }
 a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.2.0" }
+a2a-card-sdk = { package = "aithos-a2a-card-sdk", path = "../a2a-card-sdk", version = "0.2.0" }
 registry-core = { package = "aithos-registry-core", path = "../registry-core", version = "0.2.0" }
 # Client-side resolution for `certify` and `verify` — the same behaviour the
 # registry runs, deliberately not a private reimplementation. This must never

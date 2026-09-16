@@ -1,0 +1,19 @@
+[package]
+name = "aithos-a2a-card-sdk"
+description = "Author A2A Agent Cards with the official A2A Rust SDK types, emitted in the strict signable form."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "a2a_card_sdk"
+
+[dependencies]
+# The official A2A Rust SDK (github.com/a2aproject/a2a-rs): its types are the
+# authoring model, and its generated proto3 JSON layer is the encoder.
+a2a = { package = "a2a-lf", version = "0.3.1" }
+a2a-pb = { version = "0.2.1" }
+a2a-card = { package = "aithos-a2a-card", path = "../a2a-card", version = "0.2.0" }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

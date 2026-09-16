@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/a2a-card", "crates/registry-core", "crates/registry-dns", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e", "crates/aithos-cli"]
+members = ["crates/a2a-card", "crates/a2a-card-sdk", "crates/registry-core", "crates/registry-dns", "crates/registry-api", "crates/registry-lambda", "crates/registry-e2e", "crates/aithos-cli"]
 
 [workspace.package]
 # 0.2.0 for domain certification. The protocol change is purely additive —

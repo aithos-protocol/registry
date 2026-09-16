@@ -193,3 +193,102 @@ fn validate_ty(v: &Value, ty: &Ty, ptr: &str, issues: &mut Issues) {
 fn child(ptr: &str, token: &str) -> String {
     format!("{ptr}/{}", token.replace('~', "~0").replace('/', "~1"))
 }
+
+/// Restore every `REQUIRED` member a proto3 JSON encoder omitted because it
+/// held its default value — A2A §8.4.1 rule 1, which the proto3 JSON mapping
+/// itself does not apply.
+///
+/// This is for the *authoring* side only: a card produced from typed values by
+/// an encoder that follows the standard mapping (the official SDK's
+/// `protojson` layer does) comes out without `"description": ""`, `"skills": []`
+/// or `"tags": []`, and would be refused by [`validate_card`]. It adds members;
+/// it never removes, renames or reshapes one, and it is table-driven, so it
+/// cannot disagree with the table [`validate_card`] checks against.
+///
+/// The registry never calls this: it does not rewrite a card it received.
+pub fn complete_required(v: &mut Value) {
+    complete_msg(v, &AGENT_CARD);
+}
+
+fn complete_msg(v: &mut Value, msg: &Msg) {
+    let Some(obj) = v.as_object_mut() else { return };
+    for f in msg.fields {
+        if !msg.is_oneof && f.behavior == Behavior::Required && !obj.contains_key(f.name) {
+            obj.insert(f.name.to_string(), default_of(&f.ty));
+        }
+        if let Some(child) = obj.get_mut(f.name) {
+            complete_ty(child, &f.ty);
+        }
+    }
+}
+
+fn complete_ty(v: &mut Value, ty: &Ty) {
+    match ty {
+        Ty::Msg(m) => complete_msg(v, m),
+        Ty::Repeated(inner) => {
+            if let Some(items) = v.as_array_mut() {
+                items.iter_mut().for_each(|x| complete_ty(x, inner));
+            }
+        }
+        Ty::Map(inner) => {
+            if let Some(entries) = v.as_object_mut() {
+                entries.values_mut().for_each(|x| complete_ty(x, inner));
+            }
+        }
+        Ty::Str | Ty::Bool | Ty::Struct => {}
+    }
+}
+
+fn default_of(ty: &Ty) -> Value {
+    match ty {
+        Ty::Str => Value::String(String::new()),
+        Ty::Bool => Value::Bool(false),
+        Ty::Repeated(_) => Value::Array(Vec::new()),
+        Ty::Map(_) | Ty::Struct => Value::Object(serde_json::Map::new()),
+        Ty::Msg(m) => {
+            let mut o = Value::Object(serde_json::Map::new());
+            complete_msg(&mut o, m);
+            o
+        }
+    }
+}
+
+#[cfg(test)]
+mod complete_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn restores_required_defaults_and_nothing_else() {
+        let mut v = json!({
+            "capabilities": {}, "defaultInputModes": ["a"], "defaultOutputModes": ["a"],
+            "name": "A", "supportedInterfaces": [{"protocolBinding": "JSONRPC", "protocolVersion": "1.0", "url": "https://a"}],
+            "version": "1", "skills": [{"id": "s", "name": "S"}]
+        });
+        complete_required(&mut v);
+        assert_eq!(v["description"], json!(""));
+        assert_eq!(v["skills"][0]["description"], json!(""));
+        assert_eq!(v["skills"][0]["tags"], json!([]));
+        assert!(
+            v.get("provider").is_none(),
+            "an implicit member is never invented"
+        );
+        assert!(
+            v.get("iconUrl").is_none(),
+            "an optional member is never invented"
+        );
+        assert!(validate_card(&v).is_empty());
+    }
+
+    #[test]
+    fn a_complete_card_is_left_untouched() {
+        let mut v = json!({
+            "capabilities": {}, "defaultInputModes": ["a"], "defaultOutputModes": ["a"], "description": "d",
+            "name": "A", "supportedInterfaces": [{"protocolBinding": "JSONRPC", "protocolVersion": "1.0", "url": "https://a"}],
+            "version": "1", "skills": []
+        });
+        let before = v.clone();
+        complete_required(&mut v);
+        assert_eq!(v, before);
+    }
+}

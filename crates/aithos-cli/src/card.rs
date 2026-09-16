@@ -9,30 +9,42 @@ use crate::keyfile::PrivateKey;
 
 /// A minimal card that already satisfies the strict profile.
 ///
-/// Scaffolding one matters more than it looks: A2A requires protobuf field
-/// presence to be applied before signing, so a card assembled by hand from the
-/// specification's field list is very likely to be rejected for a reason that
-/// reads like pedantry until it is explained.
-pub fn scaffold(name: &str, url: &str) -> Value {
-    json!({
-        "capabilities": {},
-        "defaultInputModes": ["application/json"],
-        "defaultOutputModes": ["application/json"],
-        "description": "Describe what this agent does, in a sentence a person would recognise.",
-        "name": name,
-        "skills": [{
-            "description": "Describe what this skill does.",
-            "id": "example-skill",
-            "name": "Example skill",
-            "tags": ["example"],
+/// Built with the official A2A SDK's types and encoded by its proto3 JSON
+/// layer, never written out as JSON by hand: `a2a_card_sdk::encode` adds only
+/// the `REQUIRED` defaults A2A §8.4.1 asks for and refuses anything the
+/// registry would refuse.
+pub fn scaffold(name: &str, url: &str) -> Result<Value> {
+    use a2a_card_sdk::{AgentCapabilities, AgentCard, AgentInterface, AgentSkill};
+    let card = AgentCard {
+        name: name.into(),
+        description: "Describe what this agent does, in a sentence a person would recognise."
+            .into(),
+        version: "0.1.0".into(),
+        supported_interfaces: vec![AgentInterface::new(
+            url,
+            a2a_card_sdk::TRANSPORT_PROTOCOL_HTTP_JSON,
+        )],
+        capabilities: AgentCapabilities::default(),
+        default_input_modes: vec!["application/json".into()],
+        default_output_modes: vec!["application/json".into()],
+        skills: vec![AgentSkill {
+            id: "example-skill".into(),
+            name: "Example skill".into(),
+            description: "Describe what this skill does.".into(),
+            tags: vec!["example".into()],
+            examples: None,
+            input_modes: None,
+            output_modes: None,
+            security_requirements: None,
         }],
-        "supportedInterfaces": [{
-            "protocolBinding": "HTTP+JSON",
-            "protocolVersion": "1.0",
-            "url": url,
-        }],
-        "version": "0.1.0",
-    })
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        security_schemes: None,
+        security_requirements: None,
+        signatures: None,
+    };
+    Ok(a2a_card_sdk::encode(&card)?.value)
 }
 
 /// Parse and validate a card file, keeping any signatures it already carries.
@@ -172,11 +184,18 @@ pub fn agent_of(card: &Value, registry: &str) -> Option<String> {
 }
 
 /// Raise a card's version.
+///
+/// The card goes through the A2A SDK model and back. `decode` guarantees the
+/// round trip is exact, so a card the SDK cannot carry is refused with the
+/// reason instead of being signed with a member silently lost.
 pub fn bump(card: &mut Value, level: &str) -> Result<semver::Version> {
-    let raw = card
-        .get("version")
-        .and_then(Value::as_str)
-        .ok_or_else(|| Error::msg("the card has no `version`"))?;
+    let canonical = a2a_card::validate_value(card.clone())?;
+    let mut sdk = a2a_card_sdk::decode(&canonical).map_err(|e| {
+        Error::msg(format!(
+            "{e}\n\nSet the version in the card yourself and publish without --bump."
+        ))
+    })?;
+    let raw = sdk.version.clone();
     let mut v: semver::Version = raw.parse().map_err(|_| {
         Error::msg(format!(
             "the card's version is {raw:?}, which is not Semantic Versioning. \
@@ -204,7 +223,8 @@ pub fn bump(card: &mut Value, level: &str) -> Result<semver::Version> {
     v.pre = semver::Prerelease::EMPTY;
     v.build = semver::BuildMetadata::EMPTY;
 
-    card["version"] = json!(v.to_string());
+    sdk.version = v.to_string();
+    *card = a2a_card_sdk::encode(&sdk)?.value;
     Ok(v)
 }
 
@@ -214,7 +234,7 @@ mod tests {
 
     #[test]
     fn the_scaffold_passes_the_strict_profile() {
-        let card = scaffold("Example Agent", "https://agent.example/a2a");
+        let card = scaffold("Example Agent", "https://agent.example/a2a").unwrap();
         a2a_card::validate_value(card).expect("a scaffolded card must be publishable as is");
     }
 
@@ -225,7 +245,12 @@ mod tests {
         const REGISTRY: &str = "https://registry.example";
         let key = PrivateKey::generate();
         let agent_id = key.kid().unwrap();
-        let card = sign(&scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let card = sign(
+            &scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            None,
+        )
+        .unwrap();
         let proof = publication_proof(&key, REGISTRY, &agent_id, &card.digest).unwrap();
 
         registry_core::evaluate_write(
@@ -246,7 +271,12 @@ mod tests {
     fn a_proof_does_not_travel_between_registries() {
         let key = PrivateKey::generate();
         let agent_id = key.kid().unwrap();
-        let card = sign(&scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let card = sign(
+            &scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            None,
+        )
+        .unwrap();
         let proof =
             publication_proof(&key, "https://elsewhere.example", &agent_id, &card.digest).unwrap();
 
@@ -278,7 +308,12 @@ mod tests {
     fn re_signing_replaces_rather_than_appends() {
         let first = PrivateKey::generate();
         let second = PrivateKey::generate();
-        let once = sign(&scaffold("A", "https://a.example/x"), &[&first], None).unwrap();
+        let once = sign(
+            &scaffold("A", "https://a.example/x").unwrap(),
+            &[&first],
+            None,
+        )
+        .unwrap();
         let twice = sign(&once.value, &[&second], None).unwrap();
 
         let signatures = twice.value["signatures"].as_array().unwrap();
@@ -295,7 +330,7 @@ mod tests {
         let jku = format!("{registry}/v1/agents/{}/jwks.json", genesis.kid().unwrap());
 
         let published = sign(
-            &scaffold("A", "https://a.example/x"),
+            &scaffold("A", "https://a.example/x").unwrap(),
             &[&genesis],
             Some(&jku),
         )
@@ -320,7 +355,12 @@ mod tests {
     #[test]
     fn an_unpublished_card_belongs_to_no_entry_yet() {
         let key = PrivateKey::generate();
-        let card = sign(&scaffold("A", "https://a.example/x"), &[&key], None).unwrap();
+        let card = sign(
+            &scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            None,
+        )
+        .unwrap();
         assert_eq!(agent_of(&card.value, "https://registry.example"), None);
     }
 
@@ -332,13 +372,19 @@ mod tests {
             "https://elsewhere.example/v1/agents/{}/jwks.json",
             key.kid().unwrap()
         );
-        let card = sign(&scaffold("A", "https://a.example/x"), &[&key], Some(&jku)).unwrap();
+        let card = sign(
+            &scaffold("A", "https://a.example/x").unwrap(),
+            &[&key],
+            Some(&jku),
+        )
+        .unwrap();
         assert_eq!(agent_of(&card.value, "https://registry.example"), None);
     }
 
     #[test]
     fn bumping_moves_one_component_and_clears_the_rest() {
-        let mut card = json!({ "version": "1.4.7" });
+        let mut card = scaffold("A", "https://a.example/x").unwrap();
+        card["version"] = json!("1.4.7");
         assert_eq!(bump(&mut card, "patch").unwrap().to_string(), "1.4.8");
         assert_eq!(bump(&mut card, "minor").unwrap().to_string(), "1.5.0");
         assert_eq!(bump(&mut card, "major").unwrap().to_string(), "2.0.0");
@@ -346,7 +392,8 @@ mod tests {
 
     #[test]
     fn a_non_semver_version_is_explained_not_just_refused() {
-        let mut card = json!({ "version": "v1" });
+        let mut card = scaffold("A", "https://a.example/x").unwrap();
+        card["version"] = json!("v1");
         let err = bump(&mut card, "patch").unwrap_err().to_string();
         assert!(err.contains("orders publications"), "got {err:?}");
     }

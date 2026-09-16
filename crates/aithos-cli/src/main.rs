@@ -333,7 +333,7 @@ fn card_init(out: &std::path::Path, name: &str, url: &str) -> Result<()> {
     if out.exists() {
         return Err(Error::msg(format!("{} already exists", out.display())));
     }
-    let card = card::scaffold(name, url);
+    let card = card::scaffold(name, url)?;
     std::fs::write(out, serde_json::to_string_pretty(&card)? + "\n")?;
     println!("wrote {}", out.display());
     println!("Edit it, then `aithos card check {}`.", out.display());
@@ -348,6 +348,10 @@ fn card_check(file: &std::path::Path) -> Result<()> {
     println!("digest   {}", card.digest);
     let count = card.value["signatures"].as_array().map_or(0, Vec::len);
     println!("signed   {count} signature(s)");
+    match a2a_card_sdk::decode(&card) {
+        Ok(_) => println!("a2a sdk  readable by the official A2A SDK, round trip exact"),
+        Err(e) => println!("a2a sdk  warning: {e}"),
+    }
     Ok(())
 }
 
