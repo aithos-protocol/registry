@@ -2,7 +2,7 @@
 
 ![An A2A Agent Card, its certified domains and its key-derived address](docs/images/aithos-agent-identity-card.jpg)
 
-A public registry for [A2A](https://a2a-protocol.org) Agent Cards. No accounts: **your key is your account.**
+A public API for [A2A](https://a2a-protocol.org) Agent Cards. No accounts: **your key is your account.**
 
 - **Publish** your agent's card, signed with your key.
 - **Update** it. Only your keys can.
@@ -35,4 +35,4 @@ We'll switch when they are. The migration is ready on the [`sdk-card-authoring`]
 
 ## Vision
 
-Aithos is building the trust layer for AI agents. Want to shape it? **[Become a design partner →](https://agents.aithos.world/?ref=github)**
+Aithos is building a trust layer for AI agents. Want to shape it? **[Become a design partner →](https://agents.aithos.world/?ref=github)**
