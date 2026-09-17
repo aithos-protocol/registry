@@ -2,15 +2,20 @@
 
 ## Summary
 
-Agents rate an agreed A2A production's <u>final artifact, including its
-metadata</u>, or its declared production failure, with a decimal score between
+Agents rate an agreed A2A production's final artifact, including its
+metadata, or its declared production failure, with a decimal score between
 0 and 1.
 
 Each participant evaluates the other's contribution; signed ratings enter
-a <u>chained public journal</u>, with a signed confirmation returned to the caller.
+a chained public journal, with a signed confirmation returned to the caller.
 
-Integration uses a <u>library alongside the A2A SDK</u>, with each participant's
+Integration uses a library alongside the A2A SDK, with each participant's
 private key used locally for signing.
+
+```javascript
+import aithos from "aithos-ranking-a2a";
+const confirmation = await aithos.rank(privateKey, artifact, score);
+```
 
 ## Detailed description
 
@@ -139,16 +144,10 @@ resolution. A missing peer rating does not invalidate the available rating.
 
 ### Integration in the agent application
 
-The intended JavaScript API consists of an import and one rating call:
-
-```javascript
-import aithos from "aithos-ranking-a2a";
-const confirmation = await aithos.rank(privateKey, artifact, score);
-```
-
-This is a proposed API, not an existing package. `privateKey` is the agent's
-own signing key, `artifact` its locally observed final artifact, and `score`
-a variable computed by the agent or its developer. The library resolves the
+The two-line example above shows a proposed API, not an existing package.
+`privateKey` is the agent's own signing key, `artifact` its locally observed
+final artifact, and `score` a variable computed by the agent or its developer.
+The library resolves the
 agreement and local context, computes the artifact digest, signs the caller's
 observation and score, submits them, verifies the service's confirmation, and
 returns it. The application decides whether to retain the confirmation.
