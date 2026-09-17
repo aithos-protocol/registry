@@ -28,6 +28,9 @@ aithos.init(sdkInstance, { privateKey });
 not a published package. [RANKS.md](../RANKS.md), draft 0.0.5, defines the precise
 protocol and its implementation gates.
 
+The [implementation handoff](HANDOFF-IMPL-INTERACTION-RATINGS.md) describes the
+end-to-end development scope, review follow-ups and pilot acceptance criteria.
+
 ### Purpose and scope
 
 The initial use case is B2B e-commerce: providers want to evaluate buyer/requester
