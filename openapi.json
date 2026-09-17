@@ -4,24 +4,16 @@
     "title": "Aithos Agent Card Registry",
     "version": "0.2.0",
     "summary": "A public registry of signed A2A Agent Cards, where the key is the account.",
-    "description": "Anyone may publish an Agent Card; the card is signed by its owner's key; only\na holder of an authorized key can change it. There are no accounts, no\npasswords and no sessions, so no endpoint here takes a credential — a write\nis authorized by a signature over the operation, carried in the request body.\n\nAn entry may also certify ownership of domains, each proved by a record in\nthat domain's own DNS zone.\n\nTwo documents are normative and this one is not:\n\n- [`SPEC.md`](https://github.com/aithos-protocol/registry/blob/main/SPEC.md)\n  — identity model, card processing, writes, public endpoints, limits, and\n  the problem table.\n- [`DOMAIN-CERTIFICATION.md`](https://github.com/aithos-protocol/registry/blob/main/DOMAIN-CERTIFICATION.md)\n  — the domain certification profile, additive to the above.\n\n---\n\nSPEC.md is normative and this document is not. Where the two disagree, SPEC.md wins and this document is the defect.\n\nIt is written by hand rather than derived from the code, for the same reason the field-presence table of SPEC.md §5.2 is: a description generated from an implementation documents that implementation, including its mistakes, and stops being a second opinion about what the protocol says. The cost of writing it by hand is drift, so drift is what the test guards — `crates/registry-api/tests/openapi.rs` fails when the operations here stop matching the router, or when the problem codes stop matching the catalogue, SPEC.md §9 or the published problem pages.\n\nJSON rather than YAML because this file is served verbatim at `/v1/openapi.json`: there is no build step between what is reviewed here and what a client fetches, and the test reads it with the JSON parser the service already depends on.",
-    "license": {
-      "name": "Apache-2.0",
-      "identifier": "Apache-2.0"
-    },
+    "description": "Base URL: [`https://registry.aithos.world/v1`](https://registry.aithos.world/v1/registry),\noperated by [Aithos](https://agents.aithos.world).\nThe registry serves this reference itself, at\n[`/v1/openapi.json`](https://registry.aithos.world/v1/openapi.json) — that copy\nis the one to point a client or a code generator at.\n\nAnyone may publish an Agent Card. The card is signed by its owner's key, and\nonly a holder of an authorized key can change it. There are no accounts, no\npasswords and no sessions, so no endpoint here takes a credential: a write is\nauthorized by a signature over the operation, carried in the request body.\n\nAn entry can also certify multi-domain ownership with a TXT record from your DNS.\n\n- [`aithos` CLI](https://github.com/aithos-protocol/registry#quickstart)\n  — keys, publishing and verification, without signing anything by hand.\n- [`SPEC.md`](https://github.com/aithos-protocol/registry/blob/main/SPEC.md) and\n  [`DOMAIN-CERTIFICATION.md`](https://github.com/aithos-protocol/registry/blob/main/DOMAIN-CERTIFICATION.md)\n  — the normative rules. This page is not normative: where they disagree with\n  it, they win and this page is the defect.\n- [github.com/aithos-protocol/registry](https://github.com/aithos-protocol/registry)\n  — source, test vectors, problem pages and issues.",
     "contact": {
-      "name": "aithos-protocol/registry",
-      "url": "https://github.com/aithos-protocol/registry"
+      "name": "Aithos",
+      "url": "https://agents.aithos.world"
     }
   },
   "servers": [
     {
       "url": "https://registry.aithos.world",
       "description": "The public registry."
-    },
-    {
-      "url": "https://registry-dev.aithos.world",
-      "description": "Development. Writes here are real and equally permanent."
     }
   ],
   "security": [],

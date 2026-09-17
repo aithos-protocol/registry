@@ -154,6 +154,20 @@ A rule the audit rounds keep confirming: if a check can live in `registry-core`
 or `a2a-card`, that is where it belongs. Those two crates are the whole of what
 a second implementation has to reproduce.
 
+`openapi.json` sits at the root and is written by hand rather than derived from
+the code, for the same reason the field-presence table of `SPEC.md` §5.2 is: a
+description generated from an implementation documents that implementation,
+mistakes included, and stops being a second opinion about what the protocol
+says. The cost of writing it by hand is drift, so drift is what the test guards
+— `crates/registry-api/tests/openapi.rs` fails when the operations there stop
+matching the router, or when the problem codes stop matching the catalogue,
+`SPEC.md` §9 or the published problem pages. It is JSON rather than YAML
+because the file is served verbatim at `/v1/openapi.json`: there is no build
+step between what is reviewed here and what a client fetches, and the test reads
+it with the JSON parser the service already depends on. Editing it republishes
+[the rendered reference](https://aithos-protocol.github.io/registry/) through
+`.github/workflows/pages.yml`.
+
 ## The shape of a change
 
 One change per pull request. A subject line says what changed and, where there

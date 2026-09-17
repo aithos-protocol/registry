@@ -1,9 +1,9 @@
 //! `openapi.json` describes this service; these tests are why that stays true.
 //!
-//! The document is written by hand, for the reason its own `info.description`
-//! gives: a description generated from an implementation documents that
-//! implementation, mistakes included, and stops being a second opinion about
-//! what the protocol says. What a hand-written description costs is drift, and
+//! The document is written by hand, for the same reason the field-presence
+//! table of `SPEC.md` §5.2 is: a description generated from an implementation
+//! documents that implementation, mistakes included, and stops being a second
+//! opinion about what the protocol says. What a hand-written description costs is drift, and
 //! drift is silent — nobody notices a route that is missing from a document
 //! until a client generated from it cannot call it.
 //!

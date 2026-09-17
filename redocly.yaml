@@ -1,0 +1,7 @@
+# The rendered reference is a description of an API, not of this repository:
+# the source code's license lives in LICENSE and says nothing about the
+# service at registry.aithos.world, so openapi.json deliberately carries none.
+extends:
+  - recommended
+rules:
+  info-license: off
