@@ -5,6 +5,9 @@
 **Date:** 2026-09-17
 **A2A baseline:** v1.0.1, the commit pinned by `SPEC.md` §2
 
+For the short summary and feature overview, see
+[`docs/interaction-ratings.md`](docs/interaction-ratings.md).
+
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**
 and **MAY** are to be interpreted as described in RFC 2119 and RFC 8174.
 

@@ -14,6 +14,10 @@ record in each domain's own DNS zone.
 📖 **[Documentation](https://aithos-protocol.github.io/registry/)** —
 [`SPEC.md`](SPEC.md) holds the normative rules.
 
+The proposed [interaction ratings feature](docs/interaction-ratings.md) has a
+short summary and a detailed overview. It is a separate V0 design, not yet
+implemented; [`RANKS.md`](RANKS.md) contains its draft specification.
+
 ## Quickstart with the CLI
 
 ```sh
