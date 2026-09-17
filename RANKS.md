@@ -1,7 +1,7 @@
 # Aithos Interaction Ratings — V0
 
-**Status:** first specification draft; not implemented
-**Version:** 0.0.4
+**Status:** revised specification draft; not implemented
+**Version:** 0.0.5
 **Date:** 2026-09-17
 **A2A baseline:** v1.0.1, the commit pinned by `SPEC.md` §2
 
@@ -11,96 +11,91 @@ For the short summary and feature overview, see
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**
 and **MAY** are to be interpreted as described in RFC 2119 and RFC 8174.
 
-This document is **additive**. It specifies a separate ratings service and an
-optional A2A extension. It changes no registry endpoint, Agent Card schema,
-card canonicalization rule, or stored card byte. Implementing the registry
-does not require implementing this profile. The word *rating* means an
-individual evaluation; this profile defines no ranking of agents.
+This document is **additive**: a separate ratings service and an optional A2A
+extension. It changes no registry endpoint, Agent Card schema, card
+canonicalization rule or stored card byte. A rating is an individual evaluation;
+this profile defines no global ranking of agents.
 
-This draft records the V0 decisions agreed after
-[`docs/HANDOFF-DESIGN-RANKS.md`](docs/HANDOFF-DESIGN-RANKS.md). Where that
-handoff differs, this document takes precedence. Wire names, limits and
-cryptographic choices below are concrete proposals for implementation review,
-not claims of deployed functionality.
+This revision supersedes 0.0.4's production agreements, failure ratings and
+three-envelope submission. It follows the design-partner simplification after
+[the independent review](audits/INTERACTION-RATINGS-V0-REVIEW.md). The historical
+handoff and audit remain evidence of earlier designs, not current requirements.
+Wire names below are proposals, not a deployed package or API.
 
 ## 1. Purpose and exact claim
 
-The initial user is a B2B e-commerce company that needs to evaluate buyer
-agents as well as seller agents. The service is public: no account, API key,
-registry enrollment, or published Agent Card is required to submit a valid
-rating or read ratings.
+The initial use case is B2B e-commerce, including evaluation of buyer/requester
+agents by sellers and sellers by buyers. The service is public: no account,
+API key, registry enrollment, domain or published Agent Card is required.
 
-The claim made by an accepted rating is exactly:
+An admitted rating makes exactly this claim:
 
-> The holder of this participant key assigned this score to the other
-> participant's contribution to an agreed production, based on the result
-> declared by that key holder. Both participants signed the production
-> agreement; each rating author signs their own result observation and score.
-> The ratings service acknowledged recording this declaration at this position
-> in its journal.
+> This key holder assigned this score to the counterpart's contribution around
+> this uniquely referenced artifact, in the locally observed version committed
+> by this digest. The statement names the counterpart when known; otherwise it
+> remains an unattributed artifact rating. The service acknowledged recording
+> this declaration at this journal position.
 
-An authentic rating is attributable, not necessarily honest. An observation
-is its author's declaration, not independent proof of delivery or failure.
-Two matching observations establish that both keys signed the same result
-description. Divergent observations establish a disagreement, not who caused
-it or whether either participant committed fraud. Aithos records evaluations;
-it does not certify commercial reliability.
+The signature authenticates the declaration's author and contents. It does
+not prove the exchange happened, the named target participated, delivery was
+successful, or the evaluation is fair. There is no signed production agreement
+and no requirement for the counterpart's rating or signature over the artifact.
 
 ### 1.1 What is rated
 
-A rating evaluates a **participant's contribution to one agreed production**.
-Its subject is either one designated final A2A artifact, **including its
-business metadata**, or an explicit failure to produce that artifact after
-accepting the request. The artifact content and metadata are bound to the
-author's signed observation by a digest, without being published to the
-ratings service. The two participants need not report the same observation.
+An existing **complete A2A artifact, including its content and business
+metadata**, is the required subject. The score evaluates the other participant's
+contribution around that artifact, not the signer's own work.
 
-| Rater | Rated participant | Meaning |
+| Author's role | Rated role | Example meaning |
 | --- | --- | --- |
-| Requester | Provider | Usefulness and quality of the result, or handling of a declared production failure. |
-| Provider | Requester | Clarity and feasibility of the request, necessary inputs, and cooperation in producing the result. |
+| Receiver | Producer | Quality and usefulness of the received output. |
+| Producer | Receiver | Quality of the request, supplied information and cooperation that led to the output. |
 
-These are protocol roles, not fixed buyer/seller identities. In the initial
-quotation flow, the buyer is the requester and the seller is the provider.
-Each participant signs the artifact version it holds: produced on the
-provider side, received on the requester side. The score evaluates the
-**other participant's contribution**, not the signer's own performance.
-A quotation rating does not establish that an order was paid or fulfilled.
+Producer/receiver are roles for this artifact. In the common buyer/seller flow,
+the receiver is the requester and the producer is the provider. A quotation is
+only an illustrative business artifact, not an A2A/AI Catalog concept or a
+required pilot workflow. The library does not inspect business intent.
 
 ### 1.2 V0 boundary
 
-- One accepted production per A2A task; each participant declares its observed
-  final artifact or production failure.
-- One optional decimal score in the inclusive range 0..1 per participant for
-  that result; higher means a better contribution under the evaluator's criteria.
-- Either participant can rate independently; neither must approve the other's
-  score. No editing, deletion, free-text review, or secondary scores.
-- A disagreement between the two result observations is retained and exposed;
-  it does not invalidate either signature or automatically exclude a score.
-- Public evaluations and arithmetic means, separated by the rated role.
-- Participant signatures, a linear hash journal, and signed confirmations.
-- A library integrated into each participant's application, with a single
-  rating call as the developer-facing goal. One SDK adapter for the first
-  design partner. Multiple SDKs, Merkle trees,
-  third-party monitors and federation are not prerequisites.
+- Each note references one artifact instance and commits to its author's local
+  version. Distinct artifacts are rated separately, even within one task.
+- One optional, immutable score in 0..1 per author and artifact reference.
+- Each participant signs and submits independently in either order. A missing
+  peer rating or different peer observation does not suppress a valid note.
+- Unknown receivers may be left unnamed. Their artifact ratings do not affect
+  any agent's reputation and are never retroactively attributed in V0.
+- Public role-specific arithmetic means, a linear hash journal and signed
+  confirmations. No free-text reviews, editing, deletion or automatic scoring.
+- Client-side integration through `init(sdkInstance, { privateKey })` and
+  `rank(artifact, score)`, with no acceptance callback or business-protocol call.
+- First adapter: one pinned SDK/transport profile (§9), complete artifacts;
+  fragmented artifact streaming and universal SDK compatibility are deferred.
 
-Ordinary conversations, pre-acceptance refusals, and silence or timeouts are
-not eligible. A2A messages and tasks do not inherently promise an artifact.
-This extension makes acceptance of a production explicit. A final artifact
-does not need a native or prior provider signature: the rating call signs
-the caller's observation of it.
+No artifact means no rating: failed production, rejection, cancellation,
+silence and timeouts have no standalone rating representation. A complete
+artifact already produced/received may be rated regardless of a task's other
+outcomes; task success is not proof of production consent. Discovery, messages
+and task creation do not start a ratings-service transaction.
 
-### 1.3 Relationship to A2A and AI Catalog
+### 1.3 A2A, discovery and identity
 
-The pinned A2A schema defines no standard signature field for task artifacts.
-A2A's optional Agent Card signature authenticates the card, not task outputs.
-All agreement and rating signatures below are supplied by the **Aithos
-library and extension**, not automatically by A2A or its SDK.
+A2A does not mandate a global agent DID, mutual discovery or a caller Agent
+Card. A server can reply on the request's transport without knowing a public
+agent identity for the caller. Transport authentication may identify an account
+or application rather than the key used by this ratings profile.
 
-AI Catalog's optional trust/signature mechanisms concern catalog resources;
-its term "artifact" also includes Agent Cards, plugins and datasets. They
-do not automatically sign A2A task outputs. V0 depends on neither AI Catalog
-adoption nor a future upstream artifact-signing mechanism (see references).
+Native `artifactId` is unique only **within a task**. A signed Agent Card plus
+`artifactId` does not establish global uniqueness: the same card and ID may be
+used in different tasks. `contextId` can group multiple tasks. An Agent Card is
+also versioned descriptive data, not the stable reference chosen in §3.
+
+A2A has no standard task-artifact signature field. Optional Agent Card
+signatures authenticate the card. AI Catalog discovers resources and carries
+optional trust metadata; it supplies neither runtime participation proof nor
+artifact ratings. All additional identity exchange and rating signatures here
+belong to the Aithos library. No open upstream proposal is a dependency.
 
 ## 2. Identity and signed objects
 
@@ -110,10 +105,14 @@ For V0, each participant uses one Ed25519 key pair. `agentId` is the RFC 7638
 SHA-256 thumbprint of its public JWK, encoded as unpadded base64url. It is 43
 characters, and every participant signature MUST have `kid == agentId`.
 
-The primary rating call accepts an existing private key. The library MAY
+The initialization call accepts an existing private key. The library MAY
 provide helpers to generate a new key locally or load an existing one. It
 MUST NOT silently replace a missing, invalid or unreadable supplied key.
-The operator manages durable key storage.
+The operator manages durable key storage. The initial JS adapter accepts an
+Ed25519 private JWK with exactly `kty`, `crv`, `x` and `d`; `d` is an unpadded
+base64url 32-byte seed. It derives and checks `x` before use. Other private-key
+formats require an explicit import helper. Existing P-256 registry CLI keys
+are not directly compatible. This private input is never a public envelope.
 Private keys MUST NOT be sent to the service or the counterpart.
 
 There is no key rotation, delegation, identity recovery or revocation in V0.
@@ -154,10 +153,15 @@ H(label, object) = "sha256:" || lowercase_hex(
 )
 ```
 
-Every hash using `H` below is a string of 71 characters. All JSON integer
-fields MUST be in `0..9007199254740991`, with the narrower ranges stated below.
+Every hash using `H`, and every `artifactDigest`, uses `sha256:` followed by
+exactly 64 lowercase hexadecimal characters. Profile-defined integer fields
+MUST be in `0..9007199254740991`, with the narrower ranges stated below; this
+does not prohibit negative numbers inside arbitrary artifact data/metadata.
+Identity-valued fields MUST be canonical base64url encodings of 32 bytes;
+only identities backed by an available public key can be recomputed as its
+thumbprint. The service verifies the author, not ownership of a target ID.
 Signed envelopes use small, explicitly defined objects. Artifact commitments
-use the dedicated projection in §4.5, never a generic SDK serialization.
+use the dedicated projection in §4, never a generic SDK serialization.
 
 ### 2.3 Signature envelope
 
@@ -192,7 +196,7 @@ substitute: its thumbprint must match the identity that is being verified.
 
 The service has a separate Ed25519 signing key. `logId` is its public JWK
 thumbprint. One `logId` identifies one journal and one signing key for V0.
-Both participants MUST use the same `logId` for a production.
+Both participants MUST use the same `logId` when using this profile together.
 
 The ratings library is configured with a service HTTPS origin and its expected
 `logId`; Aithos is the default deployment. Its public descriptor supplies the
@@ -201,248 +205,179 @@ from an arbitrary URL is not by itself proof that its operator is Aithos.
 Service key rollover requires a new journal in V0; histories MUST NOT be
 silently combined or restarted under the old `logId`.
 
-## 3. Explicit production agreement
+## 3. Automatic context and unique artifact references
 
-Two signatures establish agreement without requiring the requester to know a
-server-assigned `taskId` in advance.
+### 3.1 Library-managed identity exchange
 
-This agreement establishes the participants and the production they accepted.
-It is distinct from the two independent ratings: neither agreement signature
-approves a future artifact, failure observation or score. It remains a V0
-prerequisite, collected by the adapter during the exchange; `rank` does not
-initiate a new agreement or countersigning round when rating a result.
+Each application initializes its supported SDK adapter **before** the relevant
+exchange. Initialization derives its local public identity and installs hooks
+for outgoing/incoming messages and artifact production/reception. It cannot
+recover a missing peer key merely from a URL, task ID or message role.
 
-### 3.1 Production request
-
-The requester signs:
+For the initial request/response binding, the receiver's library generates a
+random lowercase UUID v4 `requestId` for a new outgoing `SendMessage` call and
+adds a signed identity declaration to the request's extension metadata:
 
 ```json
 {
   "profile": "https://aithos.world/ext/interaction-ratings/v0",
-  "type": "production-request",
+  "type": "peer-identity",
   "logId": "<service thumbprint>",
-  "exchangeId": "<random UUID v4>",
-  "requester": "<requester agentId>",
-  "provider": "<provider agentId>",
-  "productionDigest": "sha256:<64 lowercase hex characters>",
-  "issuedAt": "2026-09-17T10:00:00.000Z"
+  "requestId": "<request correlation UUID>",
+  "agentId": "<announcing key thumbprint>",
+  "role": "receiver"
 }
 ```
 
-`exchangeId` MUST be a fresh lowercase UUID v4, reused only when retrying that
-same production. Requester and provider MUST differ.
+The producer returns the same payload shape, with its own `agentId` and
+`role: "producer"`, echoing `requestId`. The signer MUST equal `agentId`;
+`logId` MUST match local configuration. A response announcement MUST match
+the locally retained request correlation. Exact retried calls retain their
+original identity envelope and correlation. This is technical correlation,
+not a production agreement, business acceptance or a rating.
 
-`productionDigest` commits to the private production terms, including what
-final result is requested. The requester and provider agree the exact bytes
-`termsBytes` and a fresh, random 32-byte `salt` through their A2A application:
+The producer verifies a received declaration before using its identity as a
+rating target. The receiver verifies the producer declaration before assigning
+a received artifact to that producer. The adapter associates declarations with
+the actual SDK request/response and its enclosing task, not a process-global
+"last peer". Concurrent exchanges MUST NOT mix identities or artifacts.
 
-```text
-productionDigest = "sha256:" || lowercase_hex(SHA-256(
-  UTF8("aithos-ratings-v0/production") || LF || salt || termsBytes
-))
-```
+These signatures prove who signed the identity context. They do not establish
+legal identity, fresh possession in the face of replay, business participation
+or a trusted endpoint binding by themselves. Existing A2A transport security,
+authentication and task access controls remain the application's responsibility.
+Identity announcements are not a substitute authentication protocol, and the
+ratings service does not receive or certify them as proof of an exchange.
 
-The application defines the terms' format. For example, they can be the exact
-UTF-8 bytes of an agreed JSON quotation request. The provider MUST check the
-digest against those bytes before accepting. It MUST NOT hash a reserialized
-SDK object as a substitute. Terms and salt remain between the participants;
-neither is included in a submission to the ratings service. The service
-checks agreement on the digest, not the meaning or feasibility of the terms.
+If the producer receives no usable announcement, it can still produce an
+artifact and return its own announcement using a fresh `requestId` retained
+with that local context. Its receiver remains unknown. Retrospective bootstrap
+from a bare artifact or a previously unobserved response is not supported by
+the first adapter. Correlation IDs are distinct from artifact and rating IDs.
 
-The requester generates this salt once and shares it with the terms. Both
-adapters retain that agreed salt for their independent artifact commitments
-(§4.5); neither generates a replacement when signing its rating.
+### 3.2 No mandatory identity gate
 
-### 3.2 Production acceptance
+Missing, invalid or incompatible identity metadata MUST NOT be treated as a
+verified peer identity. It MUST NOT automatically block the business request
+or artifact delivery in this V0. The application decides whether to serve an
+unidentified client under its existing access policy. A required identity
+extension or automatic access-denial feature is not implemented by this design.
 
-After deciding to undertake the production, the provider signs:
+A producer with an unknown receiver can submit `rated: null` (§5). A receiver
+without a verified producer context cannot rate that artifact through the
+library, because it cannot establish the producer component of its reference.
+A missing reference or incomplete artifact is different from a missing receiver:
+no artifact rating is eligible without its reference and content commitment.
+
+When both compatible adapters are active and the identity exchange succeeds,
+both roles have the identities needed to rate. Neither must submit a rating
+for the other's targeted note to be admitted.
+
+### 3.3 One stable reference per artifact instance
+
+Before exposing a complete produced artifact through the SDK, the producer's
+library generates and attaches:
 
 ```json
 {
-  "profile": "https://aithos.world/ext/interaction-ratings/v0",
-  "type": "production-accepted",
-  "requestDigest": "<H(request, decoded production-request payload)>",
-  "taskId": "<A2A task id>",
-  "issuedAt": "2026-09-17T10:00:01.000Z"
+  "producer": "<producer agentId>",
+  "id": "<fresh lowercase UUID v4>"
 }
 ```
 
-The signer MUST be the provider named in the referenced request. This
-signature means the provider accepted that production, for those identities
-and that log, and assigned it this task. The requester's signature and this
-acceptance together form the **exchange receipt**.
+This object is `artifactRef`. The UUID MUST use a cryptographically secure
+random generator. The pair provides a producer namespace and negligible
+accidental collision probability without a central allocator. It is not a DID.
+The producer also generates a private random 32-byte `artifactSalt` once.
 
-A plain `SUBMITTED` or `WORKING` task status is not a substitute for this
-acceptance. The application MUST trigger acceptance explicitly; the adapter
-MUST NOT infer it from arbitrary messages or status changes. The provider
-MUST return the signed acceptance to the requester before, or together with,
-the result. There is no preliminary call to Aithos.
+The library MUST retain the reference and salt with the produced artifact
+before delivery. Retries, repeated reads and serialization of the same artifact
+instance MUST preserve them. Creation/recovery of this mapping MUST be atomic
+within the producer's actual task-store scope (including tenant/owner when
+applicable), task ID and native artifact ID. Concurrent publication must not
+mint two references for the same instance. Use the application's existing
+artifact/task storage; no new production-acceptance store is needed.
 
-The provider MUST assign at most one accepted production to a task. Material
-changes to the agreed production require a new task and a new agreement.
-The service enforces the observed one-production-per-task rule at submission
-time (§6); it cannot see agreements never submitted to it.
+A newly produced artifact, an intentional revised output or a new delivery
+exchange requires a fresh reference and salt. Re-reading the existing delivery
+does not. The supported pilot has one intended receiver per artifact instance;
+forwarding into a new exchange creates a new instance under its new producer.
+The receiver preserves the transmitted reference and salt exactly. It MUST NOT
+replace them with its own UUID, hash, or values fetched from Aithos.
 
-## 4. Participant observations and A2A transport
+The producer component MUST equal the local producer identity when publishing,
+and the verified producer identity when receiving. A mismatch makes the artifact
+ineligible. The observed native `artifactId` need not equal the UUID in the
+reference: they serve different purposes.
 
-### 4.1 Each participant declares its own observation
+Distinct artifacts with identical business content still have distinct
+references. Native IDs reused in other tasks/endpoints are not a collision in
+this namespace. The service cannot prevent a dishonest author inventing or
+reusing references; uniqueness is an adapter rule and a signed declaration,
+not independent proof of a real-world artifact inventory.
 
-At rating time, the library constructs an `observation` from the caller's
-local final result. It is included directly in the signed rating (§5); there
-is no separate provider-signed `production-result` prerequisite and no
-requirement to obtain or approve the counterpart's rating.
+### 3.4 A2A carriers and local capture
 
-For the same accepted production, the two independent calls are:
+The extension is advertised in the Agent Card with `required: false`. An HTTP
+client requests it through `A2A-Extensions`; an activating producer echoes the
+URI in that response header. Initialization must establish activation early
+enough for the chosen SDK's header handling.
 
-| Caller | Artifact input | Local signing key | Score evaluates |
-| --- | --- | --- | --- |
-| Provider | Its own final produced artifact snapshot | Provider's private key | Requester's contribution |
-| Requester | Its own final received artifact snapshot | Requester's private key | Provider's contribution |
+Without peer activation, the producer may still keep reference/salt and its
+snapshot in local artifact/task context for an unattributed note. It does not
+claim a successful two-sided identity exchange or require the caller to process
+Aithos metadata. Ordinary A2A handling remains subject to the application's
+existing policy.
 
-Each call creates its own signed rating and submits it directly to Aithos.
-There is no shared rating envelope and no signature collected from the peer
-over that rating. Either call may arrive first, and either may never occur.
-If both occur, there are two signed declarations and two confirmation packages,
-even when the two artifact digests are identical. The same independence applies
-to explicit failure observations.
+| Carrier | `metadata[extension-uri]` value |
+| --- | --- |
+| `SendMessageRequest` | `{identity: Signed(peer-identity)}` from the receiver. |
+| Producer response `Task` | `{identity: Signed(peer-identity)}` from the producer, correlated with the request. |
+| Complete `Artifact` | `{artifactRef, artifactSalt}`; salt is canonical unpadded base64url of 32 bytes. |
 
-The artifact variant is exactly:
+Artifacts carrying the extension also list its URI in `extensions`. The native
+A2A `TaskStatus` has no metadata field. The adapter keeps origin, tenant, task,
+request correlation, identity declarations and local artifact snapshot in its
+own context; they are not extra arguments to `rank`. Task recovery preserves
+identity context and artifact metadata under the existing access controls.
+
+The producer adapter captures the complete output at the SDK publication
+boundary; the receiver adapter captures what its SDK delivers. A provider call
+to `rank` before that publication boundary is not yet eligible. Capture freezes
+the reference, salt, counterpart when known and local snapshot before later
+application mutations. The adapter MUST NOT replace its observed version with
+the peer's version, or regenerate protocol metadata, to force matching hashes.
+A supplied artifact that was mutated after capture MUST be rejected locally.
+
+Copying an object through a supported serialization path must preserve its
+context, or `rank` must return a context error. Bare object identity/WeakMap
+state is not a durable recovery promise. The V0 does not infer eligibility
+from arbitrary objects copied from the public internet.
+
+## 4. The signed artifact observation
+
+Every admitted note contains exactly one observation:
 
 ```json
 {
-  "kind": "artifact",
-  "taskState": "TASK_STATE_COMPLETED",
-  "artifactId": "<locally observed designated final A2A artifact id>",
+  "artifactId": "<native ID in the author's local snapshot>",
   "artifactDigest": "sha256:<64 lowercase hex characters>"
 }
 ```
 
-The failure variant is exactly:
+The reference identifies the artifact instance; the digest commits to the
+particular local version, including business metadata. Both are covered by the
+same rating signature. Equal references with different local IDs or digests
+are possible observations, not grounds for rewriting or rejecting either note.
+A signature protects the declaration, not the truth of its claimed provenance.
 
-```json
-{
-  "kind": "failure",
-  "taskState": "TASK_STATE_FAILED"
-}
-```
-
-| `kind` | Allowed `taskState` | Additional fields | Author's claim |
-| --- | --- | --- | --- |
-| `artifact` | `TASK_STATE_COMPLETED` | `artifactId` and `artifactDigest`, required | This is the final artifact the author produced or received, including its content and business metadata. |
-| `failure` | `TASK_STATE_FAILED`, `TASK_STATE_CANCELED` or `TASK_STATE_REJECTED` | Neither `artifactId` nor `artifactDigest` | The accepted production explicitly ended without its designated final artifact, as observed by the author. |
-
-A failure observation is signed as part of the rating, not represented by a
-synthetic artifact. It requires an explicit terminal failure after the signed
-acceptance: the provider's application declares that outcome, or the
-requester's adapter observes that outcome in the task. The adapter MUST NOT
-turn a timeout, disconnect, missing artifact, or every terminal status into
-failure. Cancellation or rejection does not automatically warrant a low score.
-
-The service cannot independently establish that an observed state occurred.
-In particular, a requester-signed failure is **not** proof that the provider
-signed or acknowledged failure. The same boundary applies to artifact delivery.
-
-Each author MUST declare only one final observation in its immutable rating
-for a production. The provider's application designates at most one final
-artifact and SHOULD deliver the same final content to the requester. A
-counterpart's conflicting declaration MUST NOT replace or block an otherwise
-valid rating; both are retained and compared under §6.1. Their scores may
-legitimately differ even when their artifact observations match.
-
-An artifact commitment is scoped to the accepted production and thus to its
-provider and task. Artifact IDs alone are not globally unique. Partial
-artifacts and streaming chunks are not final results. Retrying a business
-operation after a terminal failure requires a new task and agreement;
-multiple independently rated final artifacts within a task are outside V0.
-
-### 4.2 Eligibility by example
-
-| Situation | Eligible in V0? |
-| --- | --- |
-| Direct A2A `Message` response, with no task | No. |
-| Discussion or refusal before production acceptance | No. |
-| `INPUT_REQUIRED` or `AUTH_REQUIRED` | Not yet; neither is a terminal result. |
-| Accepted production, locally available final designated artifact | Yes; the caller signs its observation and score. No prior artifact signature is required. |
-| Accepted production, explicit terminal failure observed as defined above | Yes; either participant may sign its own failure observation and score. |
-| The counterpart has not rated, or reports a different result | Yes; classify the comparison without rejecting the caller's declaration. |
-| `COMPLETED` without a designated artifact | No automatic eligibility or failure inference. |
-| Timeout, disconnect, or missing signed production agreement | No. |
-
-### 4.3 Extension declaration and activation
-
-A supporting provider declares the extension in its Agent Card's
-`capabilities.extensions`, using the URI in §2.2, `required: false`, and:
-
-```json
-{
-  "serviceOrigin": "https://ratings.example.com",
-  "logId": "<service thumbprint>",
-  "provider": "<provider ratings agentId>"
-}
-```
-
-These are the extension's exact `params`; the URL is illustrative. It has an
-HTTPS origin only, with no path, query, fragment, credentials or trailing
-slash. An application MUST obtain the provider's ratings identity from its
-configured counterpart or its Agent Card, not from a rating about that agent.
-The provider's acceptance proves possession of that key, not organizational
-identity or ownership of the endpoint.
-
-For HTTP bindings, request activation through `A2A-Extensions: <extension-uri>`.
-A provider activating it MUST echo that URI in the response's `A2A-Extensions`
-header. Other active extensions may also be listed. Unsupported or inactive
-ratings MUST NOT prevent an otherwise valid business interaction; that
-interaction simply produces no eligible agreement under this profile.
-
-### 4.4 Metadata placement and local context
-
-The adapter preserves signed envelopes' `protected`, `payload` and `signature`
-strings exactly. It does not canonicalize the surrounding A2A object.
-
-| Carrier | `metadata[extension-uri]` value |
-| --- | --- |
-| Requester's production `Message` | `{"request": Signed(request)}` |
-| Provider `Task` acknowledging acceptance | `{"request": Signed(request), "acceptance": Signed(acceptance)}` |
-| Final `Task` snapshot | The same agreement bundle; task state and artifacts remain in their normal A2A fields. |
-| Designated final `Artifact` | `{"request": Signed(request), "acceptance": Signed(acceptance), "artifactSalt": "<base64url of the agreed 32 private bytes>"}` |
-| Streaming `TaskStatusUpdateEvent` | The same agreement bundle as the corresponding `Task` snapshot. |
-
-Here `Signed(...)` denotes a JSON object, not literal JSON syntax. Messages
-and artifacts carrying the extension MUST also list its URI in `extensions`.
-`TaskStatus` itself has **no metadata field** in the pinned A2A schema; use
-`Task.metadata` or `TaskStatusUpdateEvent.metadata`, not an invented field.
-
-The adapter keeps the signed agreement, agreed salt, enclosing task identity
-and observed terminal result available locally. It preserves the actual final
-artifact as produced or received before application code can accidentally
-change the values to be rated. Artifact chunks are assembled before rating.
-A final snapshot or a task lookup can recover missing context, but MUST NOT
-silently replace an already captured local observation with a newer or
-counterpart-supplied version merely to make the two declarations match.
-
-The adapter MUST check the caller's key against the agreed identities, and
-bind the local observation to the task named by the acceptance. It MUST check
-that the input artifact is the designated final artifact observed in that
-local context. These are local integrity checks, not a comparison against a
-provider-signed artifact digest. A discrepancy between the two participants'
-observations is handled by the service, not rejected as a local signature
-failure. The service sees declarations only and cannot perform these transport
-checks independently.
-
-The agreement metadata supplies the task, both identities and the selected
-log to `rank`. The shared salt MUST be obtained from the agreed private
-production context (§§3.1, 4.5), and the artifact's `artifactSalt` MUST match
-that context. It MUST NOT be copied into the public submission bundle.
-For failure, the adapter exposes `{request, acceptance, observation}` as a
-local input value, with the failure observation defined in §4.1. This value
-is not a native A2A artifact or a signature by the other participant.
-
-### 4.5 Artifact content and metadata commitment
+### 4.1 Snapshot projection
 
 Each caller's library constructs a private `ArtifactSnapshot` from its locally
-observed final artifact using the pinned A2A schema. It MUST reject unknown
+observed complete artifact using the pinned A2A schema. It MUST reject unknown
 artifact/part fields, invalid field types, missing required content and
-ambiguous oneof values before projecting. The snapshot has exactly these members:
+ambiguous oneof values before projecting. `parts` MUST be nonempty. The snapshot
+has exactly these members:
 
 | Member | Value |
 | --- | --- |
@@ -466,15 +401,19 @@ This is a profile-specific projection, not the Agent Card presence algorithm.
 Canonicalization uses JCS after projection. SDK adapters MUST map their typed
 objects to this projection explicitly and reject unsafe integers or values
 that cannot be represented without loss in the JCS data model. They MUST NOT
-silently drop business metadata or substitute the counterpart's digest. SDK
-round-trip vectors are required before interoperability is claimed.
+silently drop business metadata or substitute the counterpart's digest.
+Validation applies to the captured local representation; it is not a claim
+that upstream SDK decoding preserved the wire bytes. Supported SDK inputs
+must be tested for content/metadata preservation. A lost content alternative,
+such as a decoder turning `data: null` into an empty part, MUST cause rejection
+unless the adapter captured the complete value before that loss. General
+cross-SDK equivalence is not a V0 requirement.
 
-Both participants MUST use the **same** `artifactSalt`: the private 32-byte
-salt agreed with the production terms in §3.1. Reusing it within this one
-production is domain-separated by the distinct `production` and `artifact`
-hash labels. It MUST NOT be reused for another production. Generating an
-independent salt per caller would make identical artifacts appear different.
-Each caller computes:
+### 4.2 Commitment and accepted divergences
+
+Both participants use the producer-generated `artifactSalt` transported with
+this instance. Neither creates a new salt at rating time. Each computes its
+own digest, never copying the peer's digest:
 
 ```text
 artifactDigest = "sha256:" || lowercase_hex(SHA-256(
@@ -483,224 +422,189 @@ artifactDigest = "sha256:" || lowercase_hex(SHA-256(
 ))
 ```
 
-The library attaches the shared salt and agreement evidence in the excluded
-protocol metadata (§4.4). It MUST compute the digest itself before signing
-an artifact observation; it MUST NOT trust a digest supplied by the counterpart.
-The content and salt never go to the ratings service; the public observation
-exposes only the digest. A verifier with the private artifact and salt can
-check the binding; a public reader can check the signatures and recorded
-digest without seeing that private content.
+The salt, artifact body and business metadata MUST NOT be sent to the service.
+Anyone with the private snapshot and salt can verify the content commitment;
+a public reader can verify the signed reference and digest, not reconstruct
+the private artifact. The reserved namespace holds only protocol bookkeeping;
+business fields MUST NOT be hidden there. `artifactRef` is independently covered
+by the rating signature, while `artifactSalt` participates in this commitment.
 
-The excluded namespace contains protocol receipts and the private salt, not
-business metadata. Its signed envelopes are verified independently. Applications
-MUST NOT hide business fields inside that namespace. Other metadata, including
-part metadata and other extensions' metadata, remains covered. Adding a
-confirmation or another participant's rating MUST NOT change the business
-snapshot or its digest.
+A URL part commits to the URL and supplied metadata, not future downloaded
+bytes. The library does not fetch remote content. JCS ignores object key order
+and JSON formatting whitespace; whitespace inside text/metadata strings is
+significant. Arrays and part order remain significant.
 
-For a part represented by `url`, the commitment covers the URL and any supplied
-metadata, **not the bytes subsequently served by that URL**. The library does
-not fetch remote content. JSON formatting whitespace, object key order and
-the explicitly normalized defaults are not content changes under this
-projection. Whitespace inside text or metadata string values is content and
-MUST be preserved in the commitment.
+Different SDKs, transport conversions or application processing can cause
+honest participants to observe different versions. V0 explicitly accepts this:
+no cross-SDK equality guarantee, automatic fraud label or score suppression.
+Each adapter still must sign its complete captured local representation and
+must not silently discard business metadata. An unrepresentable or incomplete
+local value is a local error, not an invented valid observation. Known codec
+losses and unsupported inputs must be documented for the selected adapter.
 
-## 5. Rating statement
+## 5. Rating statement and attribution
 
-Each participant MAY sign and submit:
+Each participant independently signs this exact payload shape:
 
 ```json
 {
   "profile": "https://aithos.world/ext/interaction-ratings/v0",
   "type": "rating",
   "logId": "<service thumbprint>",
-  "exchangeId": "<UUID from production request>",
-  "acceptanceDigest": "<H(acceptance, decoded production-accepted payload)>",
+  "artifactRef": { "producer": "<producer agentId>", "id": "<artifact UUID>" },
   "observation": {
-    "kind": "artifact",
-    "taskState": "TASK_STATE_COMPLETED",
-    "artifactId": "<locally observed designated final artifact id>",
+    "artifactId": "<locally observed native artifact ID>",
     "artifactDigest": "sha256:<64 lowercase hex characters>"
   },
   "rater": "<author's agentId>",
-  "rated": "<counterpart's agentId>",
-  "ratedRole": "provider",
-  "score": 0.85,
+  "rated": "<counterpart's agentId, or null when allowed>",
+  "ratedRole": "producer",
+  "score": 0.77,
   "issuedAt": "2026-09-17T10:00:06.000Z"
 }
 ```
 
-`ratedRole` is `provider` when the requester rates the provider, and
-`requester` for the reverse direction. The identities MUST match the agreement
-and differ. The signer MUST equal `rater`. `score` MUST be a finite JSON number
-in the inclusive range 0..1, with at most six fractional decimal places.
-The six-place precision is a proposed V0 wire limit, not a claim about
-evaluation accuracy. Extra precision MUST be rejected, not silently rounded.
-The reference chain MUST resolve to that exact agreement and service.
-`observation` MUST be one of the two variants in §4.1. The one rating
-signature covers the score, observation, identities and agreement binding
-together; a separate signature on the artifact body is unnecessary.
+`rated` is REQUIRED but may be JSON `null` only in the producer-to-unknown-
+receiver case. All other shown fields are required and non-null. `artifactRef`
+and `observation` have exactly the members shown. The signer MUST equal `rater`.
+The structural role rules are:
 
-`0` is the lowest evaluation and `1` the highest under the evaluator's stated
-criteria; intermediate values express degrees of satisfaction. There are no
-star labels or predefined human rating categories. For example, `0.85` is a
-normalized evaluation, not automatically an 85% probability of future success.
-An absent rating is distinct from a score of zero.
+| Direction | Required bindings |
+| --- | --- |
+| Receiver rates producer | `ratedRole == "producer"`; `rated == artifactRef.producer`; `rater != rated`. |
+| Producer rates identified receiver | `ratedRole == "receiver"`; `rater == artifactRef.producer`; `rated != rater`. |
+| Producer rates artifact with unknown receiver | `ratedRole == "receiver"`; `rater == artifactRef.producer`; `rated == null`. |
 
-The partner defines the concrete business criteria before the pilot. The
-agent or its developer computes and supplies `score`; the signing participant
-owns the evaluation. A finer numeric scale does not make
-different evaluators comparable or create an objective measure by itself.
-The library MUST NOT derive a score solely from artifact presence, a terminal
-status or the counterpart's evaluation. The score is an explicit argument to
-the rating call (§9.2), not an inferred value or an instruction read from
-counterpart-supplied metadata. The public signed statement includes that value.
+The library MUST take a non-null target only from its verified local peer
+context (§3), never infer it from an artifact ID, an Agent Card's name, an
+unsigned public-key claim or another author's later rating. A null-target
+note has a known author and artifact; only its receiver attribution is absent.
+It is recorded publicly but contributes to no agent's received score.
 
-For validation and aggregation, interpret the canonical JSON decimal value
-exactly: `scoreUnits = score * 1000000` MUST be an integer in 0..1000000.
-This is decimal arithmetic, not an equality test after binary floating-point
-multiplication. Values such as `0`, `0.1`, `0.85` and `1` are valid; missing
-scores, strings, negative numbers, numbers above 1 and `0.1234567` are not.
+The service verifies the author's signature and these internal bindings. It
+has no peer signature proving the named target participated. A forged claim
+about participation can therefore still be a validly signed declaration.
+Third-party claims and invented artifacts cannot be excluded just by these
+checks; V0 does not advertise verified bilateral transactions.
 
-Signing a `rating` authorizes its **public submission** to the named `logId`.
-It is not a private draft. Anyone holding the signed bundle can relay it to
-that service; a second HTTP authentication layer is unnecessary. Publishing
-the other participant's signature does not authorize creating a rating in
-their name.
+### 5.1 Score
 
-## 6. Submission, uniqueness and retry behavior
+`score` MUST be a finite JSON number in 0..1 with at most six fractional decimal
+places. Extra precision is rejected, not rounded. Interpret the canonical
+JSON decimal exactly: `scoreUnits = score * 1000000` must be an integer in
+0..1000000, not a binary-float equality test. For example, 0, 0.1, 0.77 and 1
+are valid; strings, missing scores and 0.1234567 are not.
+
+The author/application computes the score. `rank` receives an explicit variable;
+it does not run an evaluator, copy a peer score or infer a score from an SDK
+status. Higher means better under the author's criteria. An absent score is
+not zero; 0.77 is not a calibrated 77% success probability. The partner defines
+its business rubric; no quotation schema or rubric ontology is required.
+
+Signing authorizes public submission to the specified `logId`. Anyone holding
+the signed submission may relay it there. It does not authorize changing its
+target, reference, digest, score or other signed field.
+
+### 5.2 Deferred identity correlation — feasible, outside V0
+
+It is technically possible to define a later rule linking an initially
+unattributed producer rating with a receiver's signed claim about the same
+artifact reference. Such a rule would need explicit role/binding checks and
+handling for multiple claimants. A common ID or digest alone does not prove
+which key was the real receiver.
+
+V0 MUST NOT implement that retrospective attribution. A `rated: null` note
+remains null and excluded from every agent aggregate even if a receiver later
+rates the producer. Listing both notes under one reference is possible; it
+is not a reputation assignment. Any future association must be independently
+verifiable from signed records and must never edit the original note/receipt.
+Adding a unique ID to a note alone solves neither correlation nor participation.
+
+## 6. Submission, uniqueness and retries
 
 ```http
 POST /v0/ratings
 Content-Type: application/json
 ```
 
-The request is exactly this **submission bundle**:
+The body has exactly one member:
 
 ```text
-{
-  request: Signed(production-request),
-  acceptance: Signed(production-accepted),
-  rating: Signed(rating)
-}
+{ rating: Signed(rating-payload) }
 ```
 
-The service MUST validate all three envelopes and their complete chain of
-references, role bindings, observation schema, `logId` and limits before
-accepting the bundle. It MUST NOT fetch A2A endpoints, artifacts, production
-terms or keys from URLs. Embedded public keys suffice for these key-based
-identities. A missing counterpart rating is not missing evidence.
+There is no request/acceptance bundle, provider artifact signature, peer rating
+or preliminary registration call. The service validates the closed schema,
+limits, canonical encodings, strict author signature, log identity, score,
+artifact reference/digest format and role bindings before applying uniqueness.
+It cannot recompute the private artifact digest or check transport capture.
 
-In particular, validation MUST check all of these bindings within each bundle:
+Define `ratingId = H("rating", decoded rating payload)`. This identifies the
+statement, not its artifact. The service MUST atomically admit at most one
+rating for `(logId, artifactRef.producer, artifactRef.id, rater)`:
 
-- The request signer is `request.requester`; the acceptance signer is
-  `request.provider`, and `acceptance.requestDigest` hashes that request.
-- The rating signer is `rating.rater`, one of those two participants;
-  `rating.rated` is the other, with the corresponding `ratedRole`.
-- `rating.acceptanceDigest` hashes that acceptance;
-  `rating.exchangeId == request.exchangeId`, and both `logId` fields equal
-  the receiving service's identity.
+- First rating in an author slot: `201 Created` and its confirmation.
+- Same validated payload/ratingId: `200 OK`, original stored confirmation;
+  no new entry, timestamp or score contribution.
+- Different valid payload in the same slot: `409 RATING_EXISTS`, including
+  changes to score, digest, native artifact ID, timestamp or `rated`.
 
-These checks bind each author's observation to the exchange. They MUST NOT
-require the counterpart's rating, signature over the result, digest or score.
-They also apply to retries; a stored rating MUST NOT bypass bundle validation.
+The exact stored envelope is returned even if a retry uses another valid
+signature encoding for the same payload. Validation is never skipped on retry.
+A lost response does not mean rejection. The library retries its frozen signed
+submission, never a new reference or newly timestamped rating. Repeated local
+calls for a known recorded artifact return the original package when unchanged
+or an already-rated error when changed; null-to-identified is a change too.
 
-Define these identifiers over decoded payloads, not signature encodings:
+The counterpart retains its own author slot: the first rating does not reserve
+an exclusive digest or prohibit the other direction. An identified peer's note
+is admitted and counted without waiting for matching observations. There is
+no production-acceptance binding and no `EXCHANGE_CONFLICT` error in this draft.
+The service does not deduplicate real-world work presented under new references;
+that requires anti-abuse mechanisms outside V0.
 
-```text
-requestDigest    = H("request", request payload)
-acceptanceDigest = H("acceptance", acceptance payload)
-ratingId         = H("rating", rating payload)
-```
+Slot reservation, exact submission, journal entry, original signed confirmation
+and global head MUST become authoritative in one atomic durable commit. An
+uncommitted candidate MUST NOT be acknowledged or publicly exposed. A lost
+commit response must be reconciled against stored state before reporting a
+conflict. Prewritten immutable blobs are permitted only when all reads and
+acknowledgments are gated by committed durable references.
 
-The service MUST atomically enforce:
+### 6.1 Comparing reciprocal declarations
 
-1. `(requester, exchangeId)` binds one request and acceptance.
-2. `(provider, taskId)` binds one accepted production.
-3. `(provider, taskId, rater)` admits at most one rating.
+For a targeted rating, its counterpart is a rating at the same `artifactRef`
+whose `rater` equals its `rated`, whose `rated` equals its `rater`, and whose
+`ratedRole` is the opposite role. This is deterministic from signed fields.
+A null-target note has no counterpart in V0. Sharing a reference alone does
+not satisfy reciprocal attribution; no "first receiver wins" inference exists.
 
-After validating the bundle, check agreement bindings before the author's
-occupied slot. Thus an incompatible agreement returns `EXCHANGE_CONFLICT`;
-a valid replacement within the same agreement returns `RATING_EXISTS`.
+The service can receive additional keys claiming to be receivers of the same
+artifact. It cannot establish a two-participant limit without participation
+proofs. Those claims do not change a producer's signed target or consume another
+author's slot. They are not automatically paired with an unattributed note.
 
-The first accepted bundle fixes the agreement bindings. The other participant's
-rating MUST carry the same request and acceptance payloads; its observation
-and score are its own. The service MUST NOT require equal observations,
-choose one as authoritative, or let the first rater reserve an exclusive
-result digest. Different results from the two eligible authors are both
-accepted and become an observable disagreement (§6.1).
-
-Acceptance, uniqueness, journal append and confirmation persistence MUST be
-one atomic durable commit. Concurrent submissions MUST NOT reserve the same
-position or admit two ratings for one slot. A response MUST NOT acknowledge
-an entry that has not committed.
-
-- First acceptance of each author's rating: `201 Created`, with the
-  confirmation package in §7.2, even if its observation differs from the peer's.
-- Retry of the same validated `ratingId` and agreement payloads: `200 OK`,
-  with the **original stored package**, no new entry and no new timestamp.
-- A different rating for an occupied author slot, including a changed score
-  or observation: `409 RATING_EXISTS`. It is not a second admitted observation.
-- A different request or acceptance for an existing agreement binding:
-  `409 EXCHANGE_CONFLICT`. This code MUST NOT be used merely because the
-  counterpart's observation differs.
-
-The service returns the stored bundle on retry even if a caller used another
-valid signature encoding for the same payloads. Callers SHOULD retry the exact
-original bytes. Following a timeout, acceptance is unknown until a retry or
-lookup succeeds; callers MUST NOT create a new exchange to retry a rating.
-No score revision, withdrawal or tombstone operation exists in V0. Rejected
-attempts are not journal entries or public accusations against a participant.
-
-### 6.1 Comparison of the two observations
-
-Comparison is a deterministic view of the admitted ratings for one agreement
-at a chosen journal position. It is not a mutable field in either rating,
-journal entry or original confirmation.
-
-The counterpart is the other agreed participant's rating for the same
-`(provider, taskId)` and the same request/acceptance payloads. Pairing MUST NOT
-use `artifactId`, `artifactDigest`, outcome or score as a matching key:
-those values may differ and are the values to compare. A different artifact
-ID or digest therefore cannot split the pair into two unilateral exchanges.
-
-| `status` | Meaning |
+| Status | Meaning |
 | --- | --- |
-| `unilateral` | Only one participant's rating has been recorded in this journal prefix. No agreement or disagreement on the result can be inferred. |
-| `matching` | Both participants rated, and their observations match under the rules below. Their scores may differ. |
-| `divergent` | Both participants rated, and their observations differ under the rules below. Both declarations remain authentic if their signatures verify. |
+| `unilateral` | No eligible reciprocal note exists at the chosen journal prefix; this also applies to null-target notes. |
+| `matching` | Reciprocal notes exist and their local `artifactId` and `artifactDigest` both match. |
+| `divergent` | Reciprocal notes exist but at least one of those two fields differs. |
 
-Compare `kind` and `taskState`, then `artifactId` and `artifactDigest` when
-both observations are artifacts. Matching failure observations therefore
-require the same terminal state. Author identities, roles, scores, timestamps
-and signature bytes MUST NOT be compared for this purpose. The agreement
-already establishes that the observations concern the same production.
+For divergent observations, `differingFields` contains the differing names in
+this order: `artifactId`, `artifactDigest`; otherwise it is empty. Scores,
+author times and signature bytes are not compared. Pairing MUST NOT use the
+native artifact ID or content digest, since these are the values compared.
 
-For `divergent`, `differingFields` lists the differing field names in this
-fixed order: `kind`, `taskState`, `artifactId`, `artifactDigest`. Include the
-last two only when both observations are artifacts. For `matching` and
-`unilateral`, this list is empty. There is no claim about which private
-content or metadata field caused a digest difference.
-
-A second participant can change the derived status from `unilateral` to
-`matching` or `divergent` by submitting its one rating. This MUST NOT modify
-an earlier receipt, suppress either rating or retroactively invalidate it.
-Both scores remain in their respective role aggregates (§8). No automatic
-penalty, fraud label, credibility score or dispute resolution is defined.
-
-A difference can reflect different observations, a bug, incorrect salt use or
-a false declaration. Public digest comparison cannot distinguish these causes.
-Repeated divergence is available for later analysis; its occurrence alone is
-not evidence that either named participant is dishonest. A participant could
-intentionally submit a divergent observation, so automatic blame would also
-be open to abuse. Invalid cryptographic signatures are rejected before this
-comparison; they are not an admitted disagreement.
+A later reciprocal note changes the derived view, not either original note
+or confirmation. Both targeted scores count even when divergent. A difference
+may reflect SDK behavior, mutation, salt substitution or a dishonest claim;
+public comparison cannot identify its cause or the responsible party. Invalid
+signatures are rejected, not labeled as an admitted divergence.
 
 ## 7. Public journal and signed confirmation
 
 ### 7.1 One linear journal per service identity
 
-The journal is global to `logId`, not a separate chain per agent or exchange.
+The journal is global to `logId`, not a separate chain per agent or artifact.
 It contains one entry per accepted rating. Positions start at 1, increase by
 exactly 1, and MUST NOT be reused. Define the empty journal anchor:
 
@@ -720,13 +624,15 @@ Entry `E[n]` has exactly:
   "previousHash": "<G for position 1; otherwise H(entry, E[n-1])>",
   "recordHash": "<H(record, complete submission bundle)>",
   "ratingId": "<ratingId>",
-  "exchangeId": "<exchangeId>",
+  "artifactRef": { "producer": "<producer agentId>", "id": "<artifact UUID>" },
   "recordedAt": "2026-09-17T10:00:07.000Z"
 }
 ```
 
-`recordHash` covers the exact three envelopes, including their keys and
-signatures, as canonical JSON. Define `entryHash = H("entry", E[n])`.
+`recordHash = H("record", submission)` covers the complete stored
+`{rating: Signed(rating-payload)}` object, including its key and signature.
+`ratingId`, `artifactRef` and `logId` in the entry MUST equal the corresponding
+values derived from that submission. Define `entryHash = H("entry", E[n])`.
 `recordedAt` is the service's claimed registration time, not an independently
 certified timestamp. Journal order follows positions, never participant times.
 
@@ -751,15 +657,15 @@ The successful POST response is exactly:
 
 ```text
 {
-  submission: <the stored three-envelope bundle>,
+  submission: <the stored one-envelope bundle>,
   confirmation: Signed(<rating-recorded payload>)
 }
 ```
 
 This is the **confirmation package**. It contains the author's signed rating
-and observation, both participants' agreement evidence, and the service's
-signed acknowledgment. No signature is taken as a substitute for validating
-the object it covers. It acknowledges this declaration's recording, not that
+and artifact observation, and the service's signed acknowledgment. No signature
+is taken as a substitute for validating the object it covers. It acknowledges
+this declaration's recording, not that
 the two participants agree on the result. Comparison remains a separate view.
 
 Only the HTTP caller receives this response. The service does not notify the
@@ -771,7 +677,7 @@ the calling application; it requires no client receipt archive or monitoring.
 
 Given a retained confirmation package, a verifier can:
 
-1. Verify all participant signatures and semantic bindings (§§2–6).
+1. Verify the author's signature and semantic bindings (§§2–6).
 2. Recompute `ratingId`, `recordHash` and `entryHash`.
 3. Verify the service signature against the expected `logId` and check every
    reference in the entry against the submission bundle.
@@ -818,24 +724,26 @@ All endpoints use HTTPS and require no API key. The service MUST expose:
 | `GET /v0/log` | `{profile, logId, key}`; public service descriptor. |
 | `GET /v0/log/head` | `Signed({profile, type:"journal-head", logId, size, headHash})`. For size 0, `headHash == G`; otherwise it is the entry hash at `size`. |
 | `GET /v0/ratings/{ratingId}` | Original confirmation package, or `404 NOT_FOUND`. |
+| `GET /v0/artifacts/{producer}/{artifactUuid}/ratings?after=0&through=N&limit=100` | All ratings bearing this exact artifact reference, including unattributed ratings; grouping alone is not attribution. |
 | `GET /v0/ratings/{ratingId}/comparison?through=N` | Comparison with the counterpart's rating at the chosen head, as defined below. |
 | `GET /v0/log/entries?after=0&through=N&limit=100` | Consecutive confirmation packages after the specified position, bounded by the chosen head. |
-| `GET /v0/agents/{agentId}/ratings?role=provider&after=0&through=N&limit=100` | Received ratings for that identity and rated role, in increasing journal position. |
+| `GET /v0/agents/{agentId}/ratings?role=producer&after=0&through=N&limit=100` | Received ratings for that identity and rated role, in increasing journal position. |
 | `GET /v0/agents/{agentId}/summary?through=N` | Counts and means for both rated roles, as of the chosen head. |
 
 Path and query digest values include their `sha256:` prefix; clients MUST
 percent-encode path parameters as needed. `role` is required for the filtered
-list and is `requester` or `provider`. `after` defaults to 0 and `limit` to
+list and is `receiver` or `producer`. `after` defaults to 0 and `limit` to
 100; `limit` is 1..100. If `through` is omitted, the service snapshots its
 current size. A supplied `through` MUST be between 0 and the current size;
 `after` MUST be between 0 and `through`.
 
-Both listing responses are `{checkpoint, items, nextAfter}`. `checkpoint` is
+All listing responses are `{checkpoint, items, nextAfter}`. `checkpoint` is
 a signed `journal-head` at `through`; `items` holds confirmation packages.
 `nextAfter` is the last returned journal position when more matching entries
 exist up to `through`, otherwise `null`. Subsequent pages MUST use the same
 `through`. New appends MUST NOT change those pages. Unknown identities return
-an empty list or zero counts, not an invented registration requirement.
+an empty list or zero counts, not an invented registration requirement. An
+unknown artifact reference likewise returns an empty artifact-rating list.
 
 The comparison response is exactly `{checkpoint, ratingId, status,
 counterpartRatingId, differingFields}`. `status` and `differingFields` follow
@@ -848,243 +756,212 @@ at a fixed `through`. The original POST response remains unchanged.
 
 For each rated role, the summary returns `{count, sum, average}` plus the
 top-level `agentId`, `formula: "arithmetic-mean-v0"` and `checkpoint`.
-`count` is the number of accepted ratings. Accumulate the integer `scoreUnits`
+`count` is the number of accepted ratings whose signed `rated` equals this
+identity and whose `ratedRole` equals this group. Accumulate their `scoreUnits`
 from §5 as `sumUnits`; expose `sum = sumUnits / 1000000`. Compute the mean
 without cumulative binary floating-point error: round `sumUnits / count` to
 the nearest integer with ties rounded up, then divide by 1000000 to obtain
 `average`. This gives at most six fractional decimal places.
 For count 0, sum is 0 and average is `null`. The two groups are named
-`asRequester` and `asProvider`. Count and `sumUnits` MUST remain within the
+`asReceiver` and `asProducer`. Count and `sumUnits` MUST remain within the
 safe-integer bound in §2.2; the service MUST reject an append that would exceed
 it rather than round silently. JSON serialization follows JCS; trailing zeros
 are not significant and displays MUST NOT convert the scale to stars.
 
-Every admitted score has equal weight, including scores attached to failures
-and to unilateral or divergent observations. Comparison is informational;
+Every admitted rating with a non-null `rated` has equal weight, including
+unilateral or divergent observations. Ratings with `rated: null` are excluded
+from all agent counts and means, permanently in V0. Comparison is informational;
 requiring a matching observation before counting would give the counterpart
 a way to suppress an unfavorable rating.
-No mean combines roles. Displays MUST show the count with the mean, identify
-the role, and show "Not yet rated" when count is zero. History MUST expose
-score, both identities, role, the author's observation, author time, service
-registration time and comparison status as of the displayed head, with the
-underlying evidence available. These are public
-subjective ratings, not a success rate or a service-certified quality score.
+No mean combines roles. The `rated` identity is taken only from the signed
+payload; backend inference MUST NOT add another target. Displays MUST show
+the count with the mean, identify the role, and show "Not yet rated" when count
+is zero. History MUST expose score, author, nullable rated identity, rated role,
+artifact reference, the author's observation, author time, service registration
+time and comparison status as of the displayed head, with the underlying
+evidence available. These are public subjective ratings, not a success rate
+or a service-certified quality score.
 
 Filtered pages, comparisons and summaries are convenience views. The signed
 checkpoint does not by itself prove a filtered list is complete, that a peer
 rating is absent, or that a comparison or mean is correct. Anyone can recompute
 these views from the full journal prefix and compare them.
 
-## 9. Limits, errors and SDK contract
+## 9. Limits, errors and library contract
 
 ### 9.1 Service limits and errors
 
-The complete POST body MUST be at most 64 KiB, checked before parsing. Each
-decoded signed payload MUST be at most 8 KiB. `taskId` and `artifactId` MUST
-be nonempty UTF-8 strings of at most 256 bytes. Identifiers MUST be opaque and
-MUST NOT deliberately contain customer names, order details or other business
-content. Only the fields in this document are accepted; private terms, artifact
-bodies and free-form metadata are not accepted as extra submission fields.
+The POST body is limited to 64 KiB before parsing; each decoded signed payload
+to 8 KiB. Native `artifactId` is a nonempty UTF-8 string of at most 256 bytes.
+Profile IDs are canonical UUIDs/thumbprints as specified. Public native IDs
+must be opaque, not deliberate customer names or business descriptions.
+Artifact bodies, private salts, identity announcements and arbitrary metadata
+are not accepted as additional submission fields.
 
-Errors use RFC 9457 `application/problem+json`, with `type` equal to the
-service origin plus `/problems/<CODE>`, HTTP-matching `status`, a human-readable
-`title`, and an optional safe `detail`. No error response contains private key
-material or raw submission bodies.
+Errors use RFC 9457 `application/problem+json`: `type` is service origin plus
+`/problems/<CODE>`, `status` matches HTTP, `title` is human-readable and an
+optional `detail` is safe. Responses/logs must not disclose private key material
+or raw rejected request bodies.
 
 | Status | Code | Condition |
 | --- | --- | --- |
 | 400 | `INVALID_REQUEST` | Malformed JSON, schema, encoding, path or query. |
 | 413 | `PAYLOAD_TOO_LARGE` | Body or decoded payload limit exceeded. |
 | 422 | `INVALID_SIGNATURE` | Invalid key, thumbprint, algorithm or signature. |
-| 422 | `PRIVATE_KEY_SUBMITTED` | An envelope includes private key material. |
-| 422 | `INVALID_EVIDENCE` | Missing/mismatched agreement, invalid roles or malformed/ineligible observation. |
-| 422 | `WRONG_LOG` | Signed request or rating targets another service identity. |
-| 409 | `RATING_EXISTS` | Another rating occupies this participant's slot. |
-| 409 | `EXCHANGE_CONFLICT` | Task, exchange, request or acceptance binding conflicts; not divergent result observations. |
-| 404 | `NOT_FOUND` | Requested rating does not exist. |
-| 429 | `RATE_LIMITED` | Operational request limit; `Retry-After` SHOULD be supplied. |
-| 503 | `UNAVAILABLE` | The service cannot complete the operation safely. |
+| 422 | `PRIVATE_KEY_SUBMITTED` | Private key material in an envelope. |
+| 422 | `INVALID_EVIDENCE` | Invalid reference, observation, score or role bindings. |
+| 422 | `WRONG_LOG` | Rating targets another service identity. |
+| 409 | `RATING_EXISTS` | A different rating occupies this author/artifact slot. |
+| 404 | `NOT_FOUND` | Requested rating is absent from the selected prefix. |
+| 429 | `RATE_LIMITED` | Operational limit; `Retry-After` should be supplied. |
+| 503 | `UNAVAILABLE` | Operation cannot safely complete. |
 
-Operational limits are allowed without accounts; IP-based reputation is not
-part of this profile. A 503 or lost response does not establish non-acceptance:
-use the retry rules. No new problem code or endpoint is added to the registry.
+Operational rate/body limits do not require service accounts. No new endpoint
+or problem code is added to the Agent Card Registry.
 
-### 9.2 Library responsibilities
+### 9.2 Two-call integration
 
-The first implementation supplies one adapter for the partner's chosen SDK.
-The library runs inside each participant's application. Its public rating
-API is deliberately limited to importing the library and making one call:
+The target JavaScript API is:
 
 ```javascript
 import aithos from "aithos-ranking-a2a";
-const confirmation = await aithos.rank(privateKey, artifact, score);
+
+// ... initialize before the relevant A2A exchange ...
+aithos.init(sdkInstance, { privateKey });
+
+// ... existing agent logic computes score for its complete artifact ...
+    const confirmation = await aithos.rank(artifact, score);
 ```
 
-This is the **target API**, not a published package or an executable example
-with the current repository. `privateKey` is the caller's local Ed25519 key;
-`artifact` is the final artifact handled by the integrated A2A adapter; `score`
-is the caller's evaluation in 0..1. All three already exist in the application.
-The library does not choose a score, run an LLM evaluator or read a score
-chosen by the counterpart. It MUST reject a missing or invalid score.
+This is a proposed library, not an executable example or an existing package.
+`init` receives the supported client/server integration surface, validates the
+local key, configures the default service origin and pinned log identity, and
+installs all identity, reference and snapshot hooks synchronously. It returns
+no value on success and throws on invalid configuration; it needs no live
+Aithos lookup. Initialization must finish before messages flow. The library
+MUST NOT silently accept an unsupported SDK
+surface. It must not require the developer to add an acceptance call, decision
+callback, metadata builder, signing code or artifact-registration request.
 
-The **library owns context resolution and signing**. The application MUST NOT
-be required to assemble or pass receipt objects for an artifact rating.
-`rank` uses the agreement and local observation context carried by the artifact
-or captured by the integrated adapter (§4.4). The adapter MAY retrieve missing
-task context through the already configured A2A client, using the original
-provider identity and task ID; a bare `artifactId` is not a safe lookup key.
-It MUST NOT overwrite an existing local observation with a later fetched
-version. Missing agreement, mismatched local context or an unavailable agreed
-salt makes an artifact rating ineligible. A missing or different counterpart
-rating does not. A lookup never fabricates a missing agreement signature.
+The initial facade has one local signing identity and one service per process.
+Repeated identical initialization is idempotent; incompatible reinitialization
+is an error, not a silent identity replacement. Multi-agent process factories
+are deferred. Key custody is local; generating/importing an Ed25519 key is
+onboarding, not an Aithos account or an API credential.
 
-For that call, the library MUST:
+`rank` resolves the captured context and MUST:
 
-1. Derive the caller's ratings identity from `privateKey`, validate the signed
-   request and acceptance, and resolve the counterpart, task and rated role.
-   A key belonging to neither participant is refused.
-2. Validate the caller's local final-artifact context and shared salt, then
-   compute its own digest over the artifact and business metadata (§4.5).
-   It MUST NOT copy the counterpart's digest or require a prior artifact
-   signature. Construct the caller's `observation` from that local result.
-3. Build and sign the rating, covering the observation and supplied score
-   together, without transmitting the private key, artifact body, business
-   metadata or private salts.
-4. Submit the three-envelope bundle to the configured service and enforce
-   the exact retry semantics in §6. No peer acknowledgment or rating is needed.
-5. Verify that the returned confirmation matches the expected log, submitted
-   rating and stored bundle, then return the complete confirmation package.
+1. Establish the unique artifact reference, own role and counterpart if known.
+   Reject missing/changed reference, incomplete/mutated artifact, unsupported
+   representation, missing salt or missing producer context. A missing receiver
+   alone produces an explicitly unattributed note; it must not invent a target.
+2. Compute the local snapshot digest and validate the caller-supplied score.
+3. Freeze and sign the payload, including the reference, version commitment,
+   target (possibly null), role, score and log. Use the initialization key.
+4. Submit and apply §6 retry rules; no new peer signature or note is requested.
+5. Verify the service's confirmation, expected log, exact submitted payload,
+   entry references/hashes and return the complete package to the application.
 
-The result is a promise for that package. Rejection MUST distinguish invalid
-input/context, service rejection and unknown acceptance after a transport
-failure. A local response check does not audit the full journal or establish
-that the counterpart agrees with the observation. The library MUST preserve
-the original signed submission for retries of that call; durable retry storage
-across application restarts is not required by V0.
+Its promise rejects with distinguishable local input/context errors, service
+errors or unknown acceptance after transport failure. Successful packages make
+`rated: null` explicit. A local retry cache must preserve the signed submission;
+a durable client receipt archive/background retry queue is not a V0 requirement.
+After a restart without local retry state, the author slot remains protected by
+the service; no recovery guarantee or automatic re-attribution is implied.
 
-For a production failure there is no artifact. The same call accepts the
-adapter's local `{request, acceptance, observation}` value as its second
-argument, verifies the signed agreement and explicit terminal failure context,
-and signs the caller's failure observation with the supplied score. It skips
-only the artifact projection and digest step. It MUST NOT fabricate an A2A
-artifact, infer failure from silence or a timeout, or treat an arbitrary error
-object as eligible. No prior provider signature of the failure is required;
-the caller's signed rating remains a declaration, not proof of a peer admission.
-The third argument is still the caller's explicit score, not an automatic zero.
+Rating-service availability MUST NOT gate artifact production or delivery. The
+application decides when to await/handle `rank` and whether to save the returned
+confirmation. There are no peer notifications or automatic journal audits.
 
-**What the two lines assume.** The participant applications have integrated
-the A2A adapter, the service origin and expected `logId` are configured
-(Aithos defaults for the normal path), and the private signing identities are
-available for production agreement and rating. The adapter adds the agreement
-evidence during the exchange and preserves each participant's local final
-observation. It maps explicit acceptance and final-result decisions to §§3–4;
-it does not infer consent from arbitrary messages or invent another key's
-signature. The ratings call itself signs the caller's observation.
+### 9.3 Initial supported profile and implementation gates
 
-An unmodified A2A artifact is not guaranteed to carry a task ID, participant
-identities or the required signed agreement. Importing the package and calling
-it only at the end of an otherwise uninstrumented exchange cannot supply that
-missing context. In that case `rank` MUST report ineligibility. This limitation
-concerns identifying and binding the agreed exchange, **not** a native A2A
-artifact-signing requirement. The goal is one application call to rate an
-eligible result; the adapter's setup and SDK hook compatibility must be
-demonstrated with the first partner before claiming a two-line complete
-integration.
+The first adapter candidate is `@a2a-js/sdk@1.1.0`, A2A v1.0.1 over HTTPS
+JSON-RPC, using complete artifacts in non-streaming terminal task snapshots.
+For this initial adapter, capture becomes eligible after the SDK publishes or
+receives that terminal snapshot (`TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`,
+`TASK_STATE_CANCELED` or `TASK_STATE_REJECTED`),
+provided the artifact itself is complete and was not assembled from unsupported
+chunks. Interrupted/working task snapshots are outside that initial profile;
+no inference of business consent is made from the terminal state. Its exact
+client/server hook integration must be demonstrated before claiming support.
+Changing the pin is an explicit documentation/lockfile change. Streaming chunks,
+other transports and Python interoperability are not promised by this V0.
+The rated object is a complete artifact, not necessarily the task's only output.
 
-The application decides when to await or handle the rating promise. Business
-request handling and artifact delivery MUST NOT depend on the ratings service
-being reachable. Signing the agreement MUST NOT require a live service lookup
-when log configuration is already known. No durable background queue, receipt
-archive, peer notification or automatic auditor is required.
+The SDK has separate client and server surfaces, not a universal mutable SDK
+singleton. `sdkInstance` must be precisely mapped for each supported role by the
+adapter. A prototype must show the two-call contract actually works at those
+surfaces, especially that the producer's local artifact is captured before its
+rating call. If a wrapper/constructor integration is necessary, document the
+exact supported initialization form; do not claim arbitrary existing instances
+can be instrumented without demonstrating it.
 
-### 9.3 Required checks before implementation is called conformant
+The audit found valid `data: null` decoding loss and different JS/Python chunk
+assembly. The first adapter must either preserve such a complete value before
+loss or explicitly reject it as unsupported/incomplete. It need not normalize
+every other SDK's observations to equality. Pin and test supported part shapes,
+metadata, copy/recovery paths, concurrent context capture, reference persistence,
+retries, strict Ed25519 verification and both rating directions. List fixtures
+in [`vectors/ranks/README.md`](vectors/ranks/README.md).
 
-The planned vectors are listed in [`vectors/ranks/README.md`](vectors/ranks/README.md).
-They cover a successful production, a declared failure, both rating directions,
-invalid signatures and bindings, duplicate retries and concurrent writes,
-mutation of each signed field, independent observation comparison, journal
-tampering and retained-anchor checks.
-Fixtures and tests are implementation work, not delivered by this draft.
+The journal is a separate transactional service, not the registry's existing
+per-card storage. A pilot needs its own signer custody and pinned public key,
+atomic append/head storage, POST rate limits and restore policy. At low volume,
+scanning a bounded journal prefix is sufficient for correct summaries; no
+materialized aggregate system or Merkle tree is required.
 
-A pilot additionally checks whether the actual SDK preserves signed envelopes
-and the artifact projection through metadata and streaming, whether the adapter
-can observe explicit acceptance and final-result decisions, whether the rating
-call needs only the key, artifact and score, and whether the scoring criteria
-are meaningful for the partner's use case.
-There is no cross-SDK interoperability claim until independently exercised.
+## 10. Limits and deferred work
 
-## 10. What this profile does not establish
+Signatures prove authored declarations. They do not prove company identity,
+actual delivery, honest evaluation, exclusive possession of an artifact or that
+different keys belong to different operators. Public reference reuse and
+fabricated receiver claims remain possible. Identity rotation, recovery,
+Sybil resistance, moderation, retaliation controls, weighting and deduplication
+of invented exchanges are outside V0.
 
-This profile does not prove that a key belongs to a company or person, that
-two identities have different operators, that an agreed interaction happened
-outside their signed declarations, or that an evaluation is fair. Compromised
-participant keys can produce apparently valid new statements; V0 has no
-mechanism to determine when compromise occurred.
+The artifact reference distinguishes instances; the digest fixes each signed
+local representation. Neither proves an output was commercially unique or
+prevents its author assigning a fresh reference to a copy. Known SDK divergence
+is accepted, not a fraud signal. No-artifact exchanges are absent entirely,
+so received-score averages cannot measure a production success rate.
 
-Collusion, Sybil identities, retaliation, moderation, corrections, reputation
-weighting, identity age, IP/domain signals and cross-service deduplication are
-outside V0. Publishing both ratings immediately accepts the retaliation risk.
-Aithos itself could create new identities, but cannot impersonate an existing
-participant whose private key it does not hold.
+Public data includes rating authors, known targets, artifact references/native
+IDs, digests, scores and timestamps. Bodies, business metadata and salts stay
+private. A salt reduces guessing only while private; a hash is not encryption.
+The adapter must preserve existing task access controls and not expose private
+metadata through a public Agent Card. The operator knowingly enables public
+signed submissions.
 
-The signed production agreement and an eligible local final observation are
-prerequisites. A provider that refuses to sign acceptance, or goes silent
-before an eligible result is observed, can leave a production unrateable.
-Once the agreement and local observation are available, withholding a
-provider artifact signature or either participant's rating does not prevent
-the other participant from rating. A later divergent observation does not
-erase or exclude an existing score. Optional ratings and these eligibility
-limits produce selection bias: the service cannot infer the total number or
-success rate of all business interactions.
-
-The service authenticates declarations, not their underlying observations.
-A dishonest participant can sign an invented result or deliberately create a
-disagreement. Even matching declarations may be collusive. V0 exposes what was
-signed and whether the two result descriptions match; it does not identify
-the dishonest party, verify private artifact contents or turn repeated
-disagreement into an automatic reputational penalty.
-
-The public journal exposes participant relationships, identifiers, timing,
-scores, artifact digests and declared outcome states. It does not accept
-production terms, salts, artifacts, business metadata, messages, product
-details or amounts. A hash is not encryption; private salts reduce guessing
-of production terms and artifact contents only while they remain private.
-Participants MUST understand the public nature of signed rating submissions
-before enabling the integration.
-
-The linear journal makes verification proportional to the range downloaded.
-An individual receipt is not a compact proof of every prior note. There is no
-Merkle tree, blockchain, independent witness, global fork-detection mechanism,
-content backup or availability guarantee. SDK automation of those concerns is
-deliberately not required for this pilot.
+Mandatory caller identification, production consent, failed-production ratings,
+retrospective target assignment, automatic peer notification, receipt archives,
+background auditing and a global identity system are deferred. A possible later
+identity-linking design is documented in §5.2, not implemented or counted today.
 
 ## References and review notes
 
-- A2A v1.0.1: [`a2a.proto`](a2a.proto), pinned by [`SPEC.md`](SPEC.md) §2;
-  `Task`, `TaskState`, `Message`, `Artifact` and update events define the carrier
-  fields. The [official extension guide](https://a2a-protocol.org/latest/topics/extensions/),
-  checked 2026-09-17, documents declaration and `A2A-Extensions` activation.
-- [A2A Artifact](https://a2a-protocol.org/latest/specification/#417-artifact)
-  has no native signature field; [Agent Card Signing](https://a2a-protocol.org/latest/specification/#84-agent-card-signing)
-  is optional and applies to the card. Checked 2026-09-17.
-- [AI Catalog Trust Manifest](https://github.com/Agent-Card/ai-catalog/blob/main/specification/ai-catalog.md#trust-manifest)
-  is optional and concerns catalog resources. As checked 2026-09-17,
-  [AI Catalog PR #117](https://github.com/Agent-Card/ai-catalog/pull/117) is a
-  draft about contributor trust metadata and signatures; [A2A PR #2240](https://github.com/a2aproject/A2A/pull/2240)
-  is open and concerns discovery. Neither supplies native signing of A2A task
-  outputs. These are research context, not dependencies of this profile.
+- Pinned A2A v1.0.1 [`a2a.proto`](a2a.proto) and [`SPEC.md`](SPEC.md) §2:
+  `Artifact.artifact_id` is task-scoped; `Task`, `Message`, `AgentCard` and
+  `SendMessageRequest` define the carriers. No mandatory agent DID is defined.
+- [A2A discovery](https://a2a-protocol.org/latest/topics/agent-discovery/),
+  [authentication](https://a2a-protocol.org/latest/topics/enterprise-ready/#authentication)
+  and [extensions](https://a2a-protocol.org/latest/topics/extensions/), checked
+  2026-09-17. A required extension could reject unidentified callers, but that
+  access policy is not part of this V0.
+- [JS SDK 1.1.0 source](https://github.com/a2aproject/a2a-js/tree/eeffd69c983b6501cac912c693b69c034977455c):
+  client interceptors and server execution/context hooks are different surfaces.
+- [AI Catalog](https://github.com/Agent-Card/ai-catalog/tree/04a99cd1ac9a20dd6586c6196e87f5e4570303b1)
+  describes catalog resources and optional trust metadata, not task-output
+  ratings. No dependency on its open proposals or an upstream artifact signer.
 - [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515.html),
   [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037.html),
-  [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html) and
-  [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html) specify the signature,
-  key identity and canonicalization building blocks.
-- [RFC 9162 §11.3](https://www.rfc-editor.org/rfc/rfc9162.html#section-11.3)
-  explains the need to compare log views. This profile borrows the transparency
-  principle, not Certificate Transparency's wire format or Merkle construction.
-- AI Catalog, ARD, AAIF and SCITT integration are deferred. This draft makes
-  no compatibility claim and has no dependency on an open upstream proposal.
+  [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638.html),
+  [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785.html): signatures, key
+  thumbprints and canonical JSON. [RFC 9162 §11.3](https://www.rfc-editor.org/rfc/rfc9162.html#section-11.3)
+  motivates comparison of independent log views, not this profile's wire format.
 
-The implementation review must confirm the first partner's SDK/version and
-business scoring criteria, and provision the real service origin and public
-log key. These are deployment/integration inputs, not unresolved choices about
-public visibility, bilateral scoring, immutable notes or eligible outcomes.
+The [independent audit](audits/INTERACTION-RATINGS-V0-REVIEW.md) reviewed 0.0.4.
+This revision removes the production-acceptance retry problem and generic terms
+agreement; it does not claim the replacement adapter, reference persistence or
+journal has been implemented/audited. SDK integration, key verification and
+atomic storage findings remain implementation gates. No conformance claim is
+made until the planned checks execute against an actual implementation.

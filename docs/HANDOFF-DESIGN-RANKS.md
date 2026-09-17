@@ -1,19 +1,16 @@
 # Design handoff: interaction ranks
 
-> **Superseded for V0 by [`../RANKS.md`](../RANKS.md), 2026-09-17.** The
-> subsequent design-partner discussion selected public bilateral scores on
-> explicitly accepted productions, one final artifact or signed declared
-> failure per task, standalone key identities, and a linear journal returning
-> signed confirmations. The updated draft uses caller-supplied decimal scores
-> in 0..1 and commits to the final artifact including business metadata. Its
-> two result observations are signed and submitted independently, each with
-> its author's score; no prior provider signature of the result is required.
-> Divergent observations are retained without rejecting either rating. The
-> signed production agreement remains distinct from these independent ratings.
-> The target library call is `aithos.rank(privateKey, artifact, score)`. Registry
-> key lineage, Merkle proofs, IP/domain signals, multi-SDK bindings and upstream
-> integrations are not V0 requirements. This handoff is historical context; its
-> instructions to leave every decision open no longer describe the draft.
+> **Historical handoff, superseded by [`../RANKS.md`](../RANKS.md) 0.0.5.**
+> The current V0 rates existing complete artifacts including business metadata.
+> Each author signs an independent score, unique artifact reference and local
+> version commitment. There is no production agreement, acceptance callback or
+> failure rating. Integration targets `init(sdkInstance, { privateKey })` and
+> `rank(artifact, score)`. Identity exchange and artifact context are library
+> responsibilities; an unknown receiver may remain unassigned, without affecting
+> any agent's reputation. Retrospective attribution is only a deferred feasibility
+> note. Divergences remain valid declarations, and confirmations come from a
+> separate chained public journal. The text below preserves the original design
+> exploration and is not the current implementation contract.
 
 **Date:** 2026-09-17
 **For:** a session with no prior context, in `agents-card-registery-2`

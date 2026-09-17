@@ -6,6 +6,12 @@
 
 No critical break in the proposed signature/reference construction was identified. This is a design and integration audit, with targeted SDK experiments, not a cryptographic proof or an audit of a ratings implementation: no such implementation exists in the reviewed tree. The current draft correctly distinguishes authentic declarations from truthful ones, disagreement from fraud, and journal consistency from completeness. Those boundaries should be preserved.
 
+> **Historical review of draft 0.0.4.** Draft 0.0.5 subsequently removes
+> production agreements and failure ratings and changes the adapter/attribution
+> contract. This report is not a review of that revision. Local source-line links
+> below refer to commit `4335e6a42ef2dd07abe9734fb6111440a77b50ef`; retrieve that
+> version with `git show <commit>:<path>` when checking the original locations.
+
 ## 1. Scope, independence and evidence
 
 I first inspected current primary sources for the A2A organization, protocol, official JS and Python SDKs, discovery and trust work, AI Catalog, and the registry implementation. I then evaluated the draft against that investigation. Previous draft-review conclusions and the audit ledger were treated as history and scope constraints, not evidence that the design works. No additional reviewing agents were used.

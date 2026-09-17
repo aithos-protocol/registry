@@ -2,244 +2,217 @@
 
 ## Summary
 
-Agents rate an agreed A2A production's final artifact, including its
-metadata, or its declared production failure, with a decimal score between
-0 and 1.
+Agents rate an A2A artifact, including its metadata, with a decimal score between
+0 and 1 to evaluate the other participant's contribution.
 
-Each participant evaluates the other's contribution; signed ratings enter
-a chained public journal, with a signed confirmation returned to the caller.
+Each rating binds a unique artifact reference and the author's observed version,
+is signed and recorded in a chained public journal, and receives a signed
+confirmation.
 
-Integration uses a library alongside the A2A SDK, with each participant's
-private key used locally for signing.
+Integration uses a library alongside the A2A SDK, initialized with the agent's
+private key, with just `init` and `rank` as application calls.
 
 ```javascript
 import aithos from "aithos-ranking-a2a";
 
 // ...
-    const confirmation = await aithos.rank(privateKey, artifact, score);
+aithos.init(sdkInstance, { privateKey });
+
+// ...
+    const confirmation = await aithos.rank(artifact, score);
 ```
 
 ## Detailed description
 
-**Status: proposed V0, not implemented.** This page explains the feature for
-design partners. [RANKS.md](../RANKS.md) defines its precise protocol and rules.
+**Status: proposed V0, not implemented.** The example describes the target API,
+not a published package. [RANKS.md](../RANKS.md), draft 0.0.5, defines the precise
+protocol and its implementation gates.
 
-### Purpose
+### Purpose and scope
 
-The first use case is B2B e-commerce: a seller needs to evaluate the buyer
-agents it interacts with, while buyers also need to evaluate seller agents.
-Ratings provide a public history of participants' experiences with an agent
-on specific productions, such as preparing a quotation.
+The initial use case is B2B e-commerce: providers want to evaluate buyer/requester
+agents, and those agents want to evaluate providers. V0 starts with an existing
+complete artifact. It does not try to determine why it was created, whether the
+participants previously agreed to produce it, or whether a missing output was
+an actual failure.
 
-Each agent has an identity derived from its public cryptographic key. Its
-private key stays with its operator and signs its statements. Keeping that
-key preserves the identity across interactions; a new key starts a new
-ratings identity. The library handles signing, while the operator manages
-key storage.
+**No artifact means no rating.** There is no rating for silence, a timeout,
+refusal, cancellation or a failed production without an artifact. Messages,
+partial fragments and discovery alone are not rated. A complete artifact that
+was actually produced/received can still be rated if its enclosing task has
+another unsuccessful outcome. Several complete artifacts in one task are
+separate rating subjects.
 
-### What a rating evaluates
+A quotation is merely an example, not a standard A2A/AI Catalog business object
+or a mandatory workflow for this library. A report, structured result or other
+complete A2A artifact can serve the same role within the supported SDK profile.
 
-A rating evaluates **the other participant's contribution to an agreed
-production**. It is attached to one designated final artifact, including its
-content and business metadata, or to a signed declaration that the accepted
-production did not produce that artifact. The metadata is part of what can
-be evaluated and is covered by the author's signed content commitment.
-Each participant describes the result it observed; neither has to adopt the
-other's version.
+### Who evaluates whom
 
-| Who rates whom? | What is evaluated? |
+| Author | Evaluated contribution |
 | --- | --- |
-| Requester rates provider | The quality and usefulness of the result, or how the provider handled a declared failure. |
-| Provider rates requester | The clarity and feasibility of the request, the information supplied, and cooperation during production. |
+| Receiver rates producer | Quality and usefulness of the artifact received. |
+| Producer rates receiver | Quality of the request, supplied information and cooperation around producing the artifact. |
 
-For example, a buyer agent requests a quotation and a seller agent agrees to
-produce it. Once the quotation is available, the buyer can evaluate its
-usefulness, and the seller can evaluate the buyer's contribution to preparing
-it. This says nothing about a later payment or delivery.
+In the common buyer/seller exchange, the producer is the provider and the
+receiver is the requester. These are roles in the exchange, not permanent
+classes of agents. The producer does not evaluate its own work. A rating on a
+quotation says nothing by itself about a subsequent payment or delivery.
 
-Requester and provider are roles within that interaction. They do not
-permanently classify an agent as a buyer or a seller.
+The author or its developer computes `score`; our library does not choose it.
+The value is between 0 and 1, including both endpoints. Higher means better
+under the evaluator's criteria. A missing rating is different from zero, and
+0.77 is not automatically a 77% success probability.
 
-### How an interaction becomes eligible
+### Two application calls
 
-The requester signs a production request. The provider explicitly accepts
-it and signs its acceptance. Together, these statements identify the two
-participants and bind them to the same production, without publishing its
-business contents.
+`init(sdkInstance, { privateKey })` runs before the relevant exchanges. It
+configures the local signing identity and connects our adapter to the supported
+A2A client or server. The library automatically exchanges identity metadata,
+creates or preserves artifact references, and captures the local artifacts and
+their context. The private key stays local.
 
-This agreement is collected during the exchange. It does not approve the
-later artifact or either participant's score, and rating does not require a
-new signature or approval from the counterpart.
+`rank(artifact, score)` finds that context, computes the local artifact digest,
+signs the reference, observation, target and supplied score, submits the note,
+checks Aithos's confirmation and returns it. The application decides whether
+to save the confirmation. A producer calls it after publishing the complete
+artifact through the supported SDK; a receiver calls it after reception.
 
-When rating, each participant's library constructs and signs its own observation:
+The developer does not add a production-acceptance call, business callback,
+metadata assembly or signing code. Our first adapter must demonstrate this
+contract for its exact SDK version and transport. `sdkInstance` is a placeholder
+for the supported integration surface, not a promise to instrument every SDK
+or arbitrary running instance without setup.
 
-- **Artifact produced or received:** a reference and digest covering its local
-  final artifact, including content and business metadata.
-- **Production failed:** an explicit declaration that it observed the accepted
-  production end without that artifact.
+The initial candidate is the JavaScript SDK `@a2a-js/sdk@1.1.0`, A2A v1.0.1 over
+HTTPS JSON-RPC, with complete artifacts in non-streaming terminal task snapshots.
+For this adapter, the rating call follows publication/reception of that snapshot;
+the task may have completed successfully or ended with another terminal outcome.
+Streaming fragments and other SDK/transport combinations are deferred. Known
+codec losses must be handled or rejected explicitly; a complete local snapshot
+and business metadata cannot silently be replaced by incomplete data.
 
-The provider signs its own produced version with its own key and rates the
-requester's contribution. The requester signs its own received version with
-its own key and rates the provider's contribution. Each submits separately
-and receives its own confirmation. Either can submit first or remain the
-only rater; there is no shared rating that requires both signatures.
+### Identifying the participants
 
-A failure can follow an error, cancellation or rejection after acceptance.
-The requester can declare the terminal failure it observed without a separate
-provider signature acknowledging that failure. This is the requester's signed
-account, not proof that the provider agrees. Failure does not automatically
-deserve a low score: the context and each party's contribution still matter.
+A2A discovery does not necessarily work in both directions. A requester may
+know the provider's Agent Card while the provider sees only a client request.
+A2A requires neither a global agent DID nor a public requester Agent Card.
+An account used for transport authentication is not necessarily the key used
+for ratings.
 
-V0 covers one accepted production per A2A task and one final observation per
-rating author. It does not rate individual messages, intermediate results or
-artifact fragments. Conversations, refusals before acceptance, waiting for
-more information, silence and timeouts do not by themselves qualify.
+Our library derives the ratings identity from the participant's public key and
+automatically exchanges signed identity context. With compatible integrations
+and a successful identity exchange, both participants can identify the other
+for rating. A domain, registry registration and service API key are unnecessary.
+A new signing key starts a new ratings identity; rotation/recovery are deferred.
+The initial library uses Ed25519 keys, not the registry CLI's P-256 key format.
 
-### Native A2A support and the library's role
+V0 does not force the provider to reject unidentified clients. The developer
+controls their agent's access policy. If the receiver remains unknown, the
+producer can record an **unattributed artifact rating**, explicitly containing
+no target identity. It contributes to no agent's reputation. Missing producer
+context, a missing artifact reference or an incomplete snapshot instead makes
+the artifact ineligible for `rank`.
 
-A2A does not currently define a standard signature field for task artifacts.
-Its optional Agent Card signature concerns the agent's descriptive card.
-AI Catalog's optional trust/signature mechanisms concern catalog resources;
-they do not automatically sign the results exchanged during A2A tasks.
-See the dated source references in [RANKS.md](../RANKS.md#references-and-review-notes).
+If that unknown receiver later rates the producer, its signature identifies
+its own key. A common reference could support a future linking rule, but it
+would not alone prove who really received the output. **Retrospective
+attribution is outside V0:** the original unattributed note stays unattributed,
+even after another note arrives. Both notes can be listed under the artifact
+without assigning the original score to the later author.
 
-The Aithos library supplies the signatures through our extension. It signs
-the production agreement during the exchange and the caller's observation
-and score together when rating. It does not rely on a prior native signature
-of the artifact or a future upstream feature.
+### A unique artifact and a precise observed version
 
-### Submitting a rating
+A2A's native `artifactId` is only unique within a task. The same ID can occur
+in other tasks, including under the same signed Agent Card. Our library therefore
+adds an `artifactRef`: the producer's key-derived identity plus a random UUID.
+It creates this reference once before delivering the complete artifact and
+preserves it across retries and repeated reads. The receiver uses the same
+reference. No preliminary registration with Aithos is needed.
 
-Either participant may independently supply a **decimal score between 0 and
-1**, including both endpoints. A higher value means a better contribution
-under the agent's evaluation criteria. An absent rating is distinct from zero.
+Each note signs two complementary values:
 
-The agent or its developer is responsible for computing the score and
-passing it to the library. The library does not choose it. The design partner
-defines the concrete business criteria behind the scale; a value such as
-`0.77` is not automatically a 77% probability of success. Decimal precision
-does not make the assessment objective or comparable across unrelated uses.
+- **Artifact reference:** which artifact instance the note concerns.
+- **Artifact digest:** which local version of its content and business metadata
+  the author evaluated.
 
-The author signs the score, its own result observation and the reference to
-the agreed production together. Aithos checks the signatures, participant
-identities, agreement and absence of a previous rating from that author for
-the same production. It does not require a matching observation from the peer.
+Two artifacts with identical contents may have different references because
+they belong to different instances/exchanges. Two authors may sign the same
+reference but different digests because their local versions differ. A separate
+`ratingId` identifies a note; it does not replace the shared artifact reference.
 
-Each participant can submit at most one rating for the result. Ratings are
-optional, published without waiting for the other party, and cannot be edited
-or deleted in V0. There are no free-text reviews or secondary scores.
-Retrying the same submission returns its original confirmation and does not
-create another rating.
+`rank` rejects an artifact whose reference/context or content commitment cannot
+be established. Aithos cannot alter the reference or digest without invalidating
+the author's signature. This fixes what the author declared; it does not prove
+the artifact was delivered or prevent someone inventing another reference.
 
-### Comparing the two declarations
+### Independent notes and differences
 
-Aithos exposes three states, computed from the journal at a chosen point:
+Each participant signs its own produced or received version and its own score,
+then submits independently. No shared artifact signature, production agreement,
+peer rating or approval at rating time is required. Either participant may be
+the first or only rater.
 
-| State | Meaning |
-| --- | --- |
-| Unilateral | Only one participant has rated. There is no peer observation to compare. |
-| Matching | Both rated and signed the same result description, including the artifact digest when present. |
-| Divergent | Both rated, but their result descriptions differ. |
+When two notes explicitly name each other for the same artifact reference,
+Aithos can compare the native artifact IDs and digests. The comparison is
+`unilateral`, `matching` or `divergent`. Scores are excluded from comparison:
+the participants assess different contributions and may choose different values.
+An unattributed note is not automatically paired with a later receiver claim.
 
-Scores are not part of this comparison: the two participants evaluate different
-contributions and can assign different scores to the same artifact. Different
-content, business metadata, artifact identifiers or declared outcomes can
-produce a divergence. An artifact digest alone does not locate the difference.
-The library uses the same agreed private salt on both sides so independently
-computed digests can be compared.
+SDK conversions, transport behavior or application processing can cause honest
+participants to observe different versions. V0 explicitly accepts that limit.
+Both targeted notes remain recorded and counted even if divergent. The status
+is informational; it does not prove fraud or automatically penalize an agent.
+A conforming library still preserves its actual local observation and does not
+copy a peer digest or modify the artifact to force a match.
 
-A divergence preserves **both signed declarations and both scores**. It does
-not change their original confirmations, prove fraud, identify who caused the
-difference or automatically penalize either participant. These records make
-later analysis possible. V0 does not implement a credibility model or dispute
-resolution. A missing peer rating does not invalidate the available rating.
+### One immutable note per author and artifact
 
-### Integration in the agent application
+An author can publish at most one rating for an artifact reference. Repeating
+the exact submission returns its original confirmation. Changing the score,
+observation or target is rejected, including changing an unknown target into
+an identified one. The other participant retains its own opportunity to rate.
 
-The example above shows a proposed API, not an existing package.
-`privateKey` is the agent's own signing key, `artifact` its locally observed
-final artifact, and `score` a variable computed by the agent or its developer.
-The library resolves the
-agreement and local context, computes the artifact digest, signs the caller's
-observation and score, submits them, verifies the service's confirmation, and
-returns it. The application decides whether to retain the confirmation.
+The library preserves the same artifact reference and salt on retransmission;
+it never creates a new artifact merely to retry a note. These rules do not
+attempt to detect fabricated exchanges published under fresh references.
 
-The developer does not assemble proofs. Our A2A adapter collects the signed
-agreement and preserves each side's local result during the exchange. `rank`
-resolves this context from the artifact's protocol metadata or the associated
-task. It can retrieve missing context through its existing A2A client, but
-must not overwrite an already observed artifact with another version just to
-make the two declarations match.
+### Public recording and verification
 
-The signed agreement still requires integration on both sides and access to
-their signing keys when they agree to the production. An ordinary artifact
-without the task and agreement context is insufficient. The example shows
-the rating API; adapter setup remains part of integration. At rating time,
-each participant needs only its own key: no peer approval, peer rating or
-prior provider signature on the result is required.
+Aithos checks the author's signature and the payload's internal consistency,
+then commits the note and returns an Aithos-signed confirmation of its position
+in the chained public journal. The note signs the score, reference, version
+commitment and target together. There is no independent proof of the named
+counterpart's participation in the service submission.
 
-For an explicit production failure, the second argument is the adapter's
-local failure context instead of an artifact. The library signs the caller's
-failure observation. The score remains supplied by the caller; failure is
-not automatically scored as zero.
+The caller decides whether to retain the confirmation. Aithos can later provide
+earlier entries so anyone can verify signatures and the chain against a retained
+receipt. Aithos cannot modify an author's signed note undetectably, or substitute
+a different prefix that matches a retained authentic hash. Competing histories
+are detectable when compared; the journal does not guarantee availability,
+completeness or automatic global fork detection.
 
-### Authenticity and confirmation receipts
+The service returns confirmations only to the caller. No peer notification,
+receipt archive or background auditing is required. Service outages do not
+block ordinary A2A work or artifact delivery.
 
-Because the author signs the rating with a private key that Aithos does not
-hold, Aithos cannot change the score, author, counterpart or referenced result
-and still pass signature verification. Anyone with the signed evidence can
-check it using the public keys.
+### Visibility and agent summaries
 
-Aithos records each accepted rating in a public journal whose entries are
-cryptographically linked to the previous entry. It then returns the signed
-rating, its supporting evidence and an **Aithos-signed confirmation** binding
-it to a position and hash in that journal.
+The public journal exposes authors, known targets, roles, scores, artifact
+references/native IDs, digests and timestamps. Bodies and business metadata are
+committed by the digest but remain private. A producer-generated private salt
+travels with the artifact and is never submitted to Aithos. Anyone with the
+snapshot and salt can verify its digest. A URL part commits to the URL and
+metadata, not future bytes served at that URL. Only Aithos protocol bookkeeping
+is excluded from the business snapshot to avoid circular commitments.
 
-The caller decides whether and how to retain this package. V0 does not send
-a notification to the other participant or manage client receipt storage.
+Agent summaries show separate means and counts **as producer** and **as receiver**.
+All targeted notes have equal weight, including unilateral and divergent ones.
+Unattributed notes never enter an agent aggregate. An absent average is shown
+as **Not yet rated**. These are subjective evaluations of available outputs,
+not a success rate across all interactions.
 
-Later, Aithos can provide earlier journal entries so a participant can check
-their signatures and recompute the chain up to a retained receipt. A matching
-hash verifies consistency with that retained reference. A receipt does not
-reconstruct unavailable data, and competing histories are detectable only
-when compared with retained evidence or with each other.
-
-### What is public
-
-Anyone can read an agent's received ratings, their dates, the evaluators'
-identities and the declared result types. The service presents two separate
-averages, each with its rating count: **as requester** and **as provider**.
-All admitted scores count equally, including unilateral ratings and those
-with divergent observations. Requiring agreement would let a counterpart
-suppress a rating by withholding or contradicting its declaration. History
-also exposes the comparison status and the signed evidence behind it.
-An agent with no ratings appears as **Not yet rated**. There is no combined
-score or global leaderboard.
-
-The service is accessible without an account or API key. It does not receive
-the production terms, artifact bodies, business metadata, messages, product
-details or amounts. Participant relationships, rating evidence and artifact
-digests are public. The content commitment includes the artifact and its
-business metadata; protocol receipts are handled separately to avoid a
-circular signature. Anyone holding the private artifact and its salt can
-verify its digest. A URL part commits to the URL, not future content served
-at that address.
-
-### Scope of the first version
-
-The pilot focuses on one SDK integration, public bilateral ratings and
-verifiable recording. Its ratings service operates separately from the Agent
-Card Registry. An outage of the ratings service does not block the business
-interaction or artifact delivery.
-
-An authentic rating proves which key signed it, not that it is fair or
-truthful. A signature does not establish that a declared result was really
-produced or received; even two matching declarations may be collusive.
-V0 does not address fake identities, collusion, retaliation, moderation or
-reputation weighting. Optional ratings and the eligibility rules mean that
-averages are not success rates for all interactions.
-
-The journal supports consistency checks against retained receipts; it does
-not guarantee availability or automatically detect every hidden history.
-Blockchain, independent monitoring and automatic client audits are outside
-this first version.
+V0 does not solve invented identities, collusion, false participation claims,
+retaliation, moderation or reputation weighting. Those accepted limits do not
+change the requirement that every admitted note be signed and bound to one
+artifact reference and the author's precise version commitment.
