@@ -67,12 +67,22 @@ it and signs its acceptance. Together, these statements identify the two
 participants and bind them to the same production, without publishing its
 business contents.
 
+This agreement is collected during the exchange. It does not approve the
+later artifact or either participant's score, and rating does not require a
+new signature or approval from the counterpart.
+
 When rating, each participant's library constructs and signs its own observation:
 
 - **Artifact produced or received:** a reference and digest covering its local
   final artifact, including content and business metadata.
 - **Production failed:** an explicit declaration that it observed the accepted
   production end without that artifact.
+
+The provider signs its own produced version with its own key and rates the
+requester's contribution. The requester signs its own received version with
+its own key and rates the provider's contribution. Each submits separately
+and receives its own confirmation. Either can submit first or remain the
+only rater; there is no shared rating that requires both signatures.
 
 A failure can follow an error, cancellation or rejection after acceptance.
 The requester can declare the terminal failure it observed without a separate

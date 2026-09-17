@@ -1,7 +1,7 @@
 # Aithos Interaction Ratings — V0
 
 **Status:** first specification draft; not implemented
-**Version:** 0.0.3
+**Version:** 0.0.4
 **Date:** 2026-09-17
 **A2A baseline:** v1.0.1, the commit pinned by `SPEC.md` §2
 
@@ -62,8 +62,10 @@ ratings service. The two participants need not report the same observation.
 
 These are protocol roles, not fixed buyer/seller identities. In the initial
 quotation flow, the buyer is the requester and the seller is the provider.
-The provider does not rate its own artifact. A quotation rating does not
-establish that an order was paid or fulfilled.
+Each participant signs the artifact version it holds: produced on the
+provider side, received on the requester side. The score evaluates the
+**other participant's contribution**, not the signer's own performance.
+A quotation rating does not establish that an order was paid or fulfilled.
 
 ### 1.2 V0 boundary
 
@@ -192,9 +194,9 @@ The service has a separate Ed25519 signing key. `logId` is its public JWK
 thumbprint. One `logId` identifies one journal and one signing key for V0.
 Both participants MUST use the same `logId` for a production.
 
-The SDK is configured with a service HTTPS origin and its expected `logId`;
-Aithos is the default deployment. Its public descriptor supplies the public
-key. The key's thumbprint MUST match that expected identity. A key fetched
+The ratings library is configured with a service HTTPS origin and its expected
+`logId`; Aithos is the default deployment. Its public descriptor supplies the
+public key. The key's thumbprint MUST match that expected identity. A key fetched
 from an arbitrary URL is not by itself proof that its operator is Aithos.
 Service key rollover requires a new journal in V0; histories MUST NOT be
 silently combined or restarted under the old `logId`.
@@ -203,6 +205,12 @@ silently combined or restarted under the old `logId`.
 
 Two signatures establish agreement without requiring the requester to know a
 server-assigned `taskId` in advance.
+
+This agreement establishes the participants and the production they accepted.
+It is distinct from the two independent ratings: neither agreement signature
+approves a future artifact, failure observation or score. It remains a V0
+prerequisite, collected by the adapter during the exchange; `rank` does not
+initiate a new agreement or countersigning round when rating a result.
 
 ### 3.1 Production request
 
@@ -240,6 +248,10 @@ digest against those bytes before accepting. It MUST NOT hash a reserialized
 SDK object as a substitute. Terms and salt remain between the participants;
 neither is included in a submission to the ratings service. The service
 checks agreement on the digest, not the meaning or feasibility of the terms.
+
+The requester generates this salt once and shares it with the terms. Both
+adapters retain that agreed salt for their independent artifact commitments
+(§4.5); neither generates a replacement when signing its rating.
 
 ### 3.2 Production acceptance
 
@@ -279,6 +291,20 @@ At rating time, the library constructs an `observation` from the caller's
 local final result. It is included directly in the signed rating (§5); there
 is no separate provider-signed `production-result` prerequisite and no
 requirement to obtain or approve the counterpart's rating.
+
+For the same accepted production, the two independent calls are:
+
+| Caller | Artifact input | Local signing key | Score evaluates |
+| --- | --- | --- | --- |
+| Provider | Its own final produced artifact snapshot | Provider's private key | Requester's contribution |
+| Requester | Its own final received artifact snapshot | Requester's private key | Provider's contribution |
+
+Each call creates its own signed rating and submits it directly to Aithos.
+There is no shared rating envelope and no signature collected from the peer
+over that rating. Either call may arrive first, and either may never occur.
+If both occur, there are two signed declarations and two confirmation packages,
+even when the two artifact digests are identical. The same independence applies
+to explicit failure observations.
 
 The artifact variant is exactly:
 
@@ -474,8 +500,10 @@ snapshot or its digest.
 
 For a part represented by `url`, the commitment covers the URL and any supplied
 metadata, **not the bytes subsequently served by that URL**. The library does
-not fetch remote content. Whitespace, object key order and the explicitly
-normalized defaults are not content changes under this projection.
+not fetch remote content. JSON formatting whitespace, object key order and
+the explicitly normalized defaults are not content changes under this
+projection. Whitespace inside text or metadata string values is content and
+MUST be preserved in the commitment.
 
 ## 5. Rating statement
 
@@ -563,6 +591,20 @@ accepting the bundle. It MUST NOT fetch A2A endpoints, artifacts, production
 terms or keys from URLs. Embedded public keys suffice for these key-based
 identities. A missing counterpart rating is not missing evidence.
 
+In particular, validation MUST check all of these bindings within each bundle:
+
+- The request signer is `request.requester`; the acceptance signer is
+  `request.provider`, and `acceptance.requestDigest` hashes that request.
+- The rating signer is `rating.rater`, one of those two participants;
+  `rating.rated` is the other, with the corresponding `ratedRole`.
+- `rating.acceptanceDigest` hashes that acceptance;
+  `rating.exchangeId == request.exchangeId`, and both `logId` fields equal
+  the receiving service's identity.
+
+These checks bind each author's observation to the exchange. They MUST NOT
+require the counterpart's rating, signature over the result, digest or score.
+They also apply to retries; a stored rating MUST NOT bypass bundle validation.
+
 Define these identifiers over decoded payloads, not signature encodings:
 
 ```text
@@ -576,6 +618,10 @@ The service MUST atomically enforce:
 1. `(requester, exchangeId)` binds one request and acceptance.
 2. `(provider, taskId)` binds one accepted production.
 3. `(provider, taskId, rater)` admits at most one rating.
+
+After validating the bundle, check agreement bindings before the author's
+occupied slot. Thus an incompatible agreement returns `EXCHANGE_CONFLICT`;
+a valid replacement within the same agreement returns `RATING_EXISTS`.
 
 The first accepted bundle fixes the agreement bindings. The other participant's
 rating MUST carry the same request and acceptance payloads; its observation
@@ -611,6 +657,12 @@ attempts are not journal entries or public accusations against a participant.
 Comparison is a deterministic view of the admitted ratings for one agreement
 at a chosen journal position. It is not a mutable field in either rating,
 journal entry or original confirmation.
+
+The counterpart is the other agreed participant's rating for the same
+`(provider, taskId)` and the same request/acceptance payloads. Pairing MUST NOT
+use `artifactId`, `artifactDigest`, outcome or score as a matching key:
+those values may differ and are the values to compare. A different artifact
+ID or digest therefore cannot split the pair into two unilateral exchanges.
 
 | `status` | Meaning |
 | --- | --- |

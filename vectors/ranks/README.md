@@ -21,5 +21,29 @@ section. Use fixed test keys, salts and times; never production credentials.
 | Read API and means (§8) | Stable bounded pagination and comparison at fixed `through`; comparison before named rating exists returns 404; counterpart rating ID resolves to its receipt; absent rating distinct from score 0; both role means; failure, unilateral and divergent scores included equally; decimal sums and six-place half-up rounding; integer-unit overflow; no history; recompute all views from full prefix; checkpoint alone does not authenticate summary/comparison completeness. |
 | Service/SDK (§9) | Body/payload limits; safe errors; no remote key/content fetch; `rank(privateKey, artifact, score)` resolves context, computes its own artifact/metadata digest and signs observation plus supplied score; missing context/key/score rejected; adapter failure context accepted without synthetic artifact or prior provider failure signature; private contents/salts never submitted; full confirmation returned and checked; no peer acknowledgment required; ratings outage does not block delivery. |
 
+## Independent rating scenarios
+
+These are expected behaviors for future fixtures, not executed service tests.
+Use one signed production agreement, requester `R`, provider `P`, and a
+shared private salt. Each scenario starts with an empty journal unless stated
+otherwise. Run every two-author scenario in both submission orders.
+
+| Scenario | Expected result |
+| --- | --- |
+| Only `R` submits its own signed observation and a score of `0.77` for `P`; there is no provider result signature or provider rating. | `201`; one entry and confirmation, `unilateral`; `P.asProvider` has count 1 and average `0.77` immediately. No waiting state or peer acknowledgment. |
+| `R` submits `0.77` for `P`; `P` separately submits `0.25` for `R`; both compute the same artifact observation from their own copies. | Two `201` responses and distinct confirmations; `matching` despite different scores. `P.asProvider` averages `0.77`; `R.asRequester` averages `0.25`. Neither author signs the other's score. |
+| Same submissions, but a business metadata value differs between their copies, producing different digests. | Both accepted; one pair with `divergent`, not two unilateral pairs or `EXCHANGE_CONFLICT`. Both original confirmations remain valid and both role aggregates retain their scores. |
+| Same submissions, but the artifact IDs differ, or one author declares a final artifact and the other an explicit failure. | Both accepted and paired by the agreed production; `divergent`. No result digest, artifact ID or outcome may be used to hide the disagreement by splitting the pair. |
+| `R` already has an accepted rating; `P` never submits, submits much later, or sends a rating with an invalid signature. | `R`'s confirmation and contribution to the mean remain unchanged. No submission keeps the state unilateral; a later valid one creates a second entry and updates only the derived comparison; an invalid signature returns `422 INVALID_SIGNATURE` and adds no entry. |
+| An admitted author's score or observation changes on resubmission. | Changing signed bytes without a valid new signature returns `422 INVALID_SIGNATURE`; a valid newly signed replacement returns `409 RATING_EXISTS`. Neither edits the original rating. |
+| A valid rating is attached to a different agreement or carries a mismatched `exchangeId`, rater, rated identity or role. | Invalid internal bindings return `422 INVALID_EVIDENCE`; a separately valid but incompatible agreement reusing an existing task/exchange binding returns `409 EXCHANGE_CONFLICT`. These are not result divergences. |
+
+The library fixtures must additionally show that the requester-generated salt
+survives the exchange, both libraries compute their own digest, text/metadata
+string whitespace changes the commitment, and neither `rank` call requests
+a new peer signature. Mutating an already captured local snapshot is distinct
+from receiving a version different from the provider's own snapshot: only the
+former violates local context integrity.
+
 No multi-language interoperability or implementation conformance is claimed
 until these vectors exist and the corresponding checks have run.
