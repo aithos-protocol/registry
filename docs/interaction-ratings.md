@@ -14,7 +14,9 @@ private key used locally for signing.
 
 ```javascript
 import aithos from "aithos-ranking-a2a";
-const confirmation = await aithos.rank(privateKey, artifact, score);
+
+// ...
+    const confirmation = await aithos.rank(privateKey, artifact, score);
 ```
 
 ## Detailed description
@@ -144,7 +146,7 @@ resolution. A missing peer rating does not invalidate the available rating.
 
 ### Integration in the agent application
 
-The two-line example above shows a proposed API, not an existing package.
+The example above shows a proposed API, not an existing package.
 `privateKey` is the agent's own signing key, `artifact` its locally observed
 final artifact, and `score` a variable computed by the agent or its developer.
 The library resolves the
@@ -161,7 +163,7 @@ make the two declarations match.
 
 The signed agreement still requires integration on both sides and access to
 their signing keys when they agree to the production. An ordinary artifact
-without the task and agreement context is insufficient. These two lines show
+without the task and agreement context is insufficient. The example shows
 the rating API; adapter setup remains part of integration. At rating time,
 each participant needs only its own key: no peer approval, peer rating or
 prior provider signature on the result is required.
