@@ -680,6 +680,14 @@ V1 does **not** provide: organizational identity, endpoint liveness or
 conformance checks, a transparency log, accounts, search, ranking, reputation,
 or any notion of a verified badge.
 
+The separate draft [`RANKS.md`](RANKS.md) defines public, signed interaction
+ratings and a journal for those ratings. These are not registry features:
+ratings are participant statements, and the ratings service acknowledges
+their registration rather than certifying their truth. Its V0 identities are
+individual key thumbprints, not this registry's rotating key lineages. It adds
+no field or endpoint to V1 and makes no implementation claim. Ranking and
+reputation remain outside the registry core.
+
 Domain verification was on that list, and no longer is:
 [`DOMAIN-CERTIFICATION.md`](DOMAIN-CERTIFICATION.md) provides it, as the
 additive profile the next paragraph reserved room for. It changes nothing here —
@@ -702,7 +710,10 @@ migration:
 - **Transparency.** V1 has no append-only log, so mis-issuance by a compromised
   registry operator is undetectable by publishers. This is acceptable only
   because V1 makes no identity claim. It stops being acceptable the day a
-  verified badge exists.
+  verified badge exists. The separate ratings profile applies this principle
+  to its own signed registration confirmations: a chained journal and retained
+  external receipts permit consistency checks. They are not a transparency
+  log for registry writes and do not establish a verified badge.
 
 ## 11. Conformance
 

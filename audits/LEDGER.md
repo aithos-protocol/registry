@@ -191,6 +191,10 @@ consistency).
 
 ## Recorded outside an audit round
 
+| Date | Ref | Decision reopened | Evidence and boundary | Where |
+| --- | --- | --- | --- | --- |
+| 2026-09-17 | RATINGS-V0 | `SPEC.md` §10 and `CONTRIBUTING.md` exclude ratings/reputation and a transparency log from the registry. | **Separate draft profile accepted for design.** Mathieu's design-partner case is B2B e-commerce evaluation of requester/buyer agents as well as providers. The agreed V0 records participant-signed scores for an explicitly accepted production, linked to a provider-signed final artifact reference or declared failure. Public reads need no API key. A separate service returns signed confirmations from a linear hash journal; retained external receipts permit consistency checks. No score is an assertion of truth by the registry, no registry data or endpoint changes, and no implementation is authorized by this documentation change. Global fork detection, artifact-body authentication, registry key lineage, Sybil resistance and upstream integrations are outside this V0. | `RANKS.md`, `SPEC.md` §10, `vectors/ranks/README.md` |
+
 **Domain certification stores its state on its own DynamoDB item** (`sk =
 CERT`), never as attributes of the agent's `CURRENT` item. `commit` replaces
 that item wholesale — the same mechanism B-M3 documented for `createdAt` — so

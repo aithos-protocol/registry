@@ -1,5 +1,14 @@
 # Design handoff: interaction ranks
 
+> **Superseded for V0 by [`../RANKS.md`](../RANKS.md), 2026-09-17.** The
+> subsequent design-partner discussion selected public bilateral scores on
+> explicitly accepted productions, one final artifact or signed declared
+> failure per task, standalone key identities, and a linear journal returning
+> signed confirmations. Artifact-body signing, registry key lineage, Merkle
+> proofs, IP/domain signals, multi-SDK bindings and upstream integrations are
+> not V0 requirements. This handoff is retained as historical context; its
+> instructions to leave every decision open no longer describe the draft.
+
 **Date:** 2026-09-17
 **For:** a session with no prior context, in `agents-card-registery-2`
 **Goal:** write the **design** (a draft profile, not code) for signed, two-sided,

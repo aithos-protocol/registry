@@ -87,6 +87,11 @@ ranking, reputation, verified badges. Those are not gaps awaiting a patch. They
 are the reason the claim an entry makes is small enough to be true, and a pull
 request that adds one will be declined without any judgement on its code.
 
+The separate draft [`RANKS.md`](RANKS.md) is a narrowly scoped exception for
+design work on signed interaction ratings and their own service journal. It
+does not reopen ranking or reputation in the registry core. Its scope and the
+evidence for the decision are recorded in `audits/LEDGER.md`.
+
 Concretely, in roughly the order these come up:
 
 - **A new CLI command.** The nine in the README are the surface. `rotate` is
