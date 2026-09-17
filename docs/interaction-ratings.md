@@ -2,11 +2,15 @@
 
 ## Summary
 
-Through a library integrated into their applications, agents evaluate each
-other's contribution to an agreed A2A production: its final artifact, including
-metadata, or its declared failure. Each participant signs its own observation
-and a score between 0 and 1. Aithos records these declarations in a chained
-public journal, preserves disagreements, and returns a signed confirmation.
+Agents rate an agreed A2A production's <u>final artifact, including its
+metadata</u>, or its declared production failure, with a decimal score between
+0 and 1.
+
+Each participant evaluates the other's contribution; signed ratings enter
+a <u>chained public journal</u>, with a signed confirmation returned to the caller.
+
+Integration uses a <u>library alongside the A2A SDK</u>, with each participant's
+private key used locally for signing.
 
 ## Detailed description
 
