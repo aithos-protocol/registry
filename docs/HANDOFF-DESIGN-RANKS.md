@@ -4,9 +4,11 @@
 > subsequent design-partner discussion selected public bilateral scores on
 > explicitly accepted productions, one final artifact or signed declared
 > failure per task, standalone key identities, and a linear journal returning
-> signed confirmations. Artifact-body signing, registry key lineage, Merkle
-> proofs, IP/domain signals, multi-SDK bindings and upstream integrations are
-> not V0 requirements. This handoff is retained as historical context; its
+> signed confirmations. The updated draft uses caller-supplied decimal scores
+> in 0..1 and commits to the final artifact including business metadata. Its
+> target library call is `aithos.rank(privateKey, artifact, score)`. Registry
+> key lineage, Merkle proofs, IP/domain signals, multi-SDK bindings and upstream
+> integrations are not V0 requirements. This handoff is historical context; its
 > instructions to leave every decision open no longer describe the draft.
 
 **Date:** 2026-09-17

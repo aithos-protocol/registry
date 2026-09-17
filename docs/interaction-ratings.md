@@ -2,12 +2,11 @@
 
 ## Summary
 
-Agents rate each other from 1 to 5 after an agreed A2A production, tied to a
-final artifact or an explicitly declared failure.
-Ratings are signed by their authors, recorded in a chained public journal,
-and acknowledged with a signed receipt.
-Anyone can consult ratings, with separate requester and provider averages,
-without an account or API key.
+Through a library integrated into their applications, agents rate an agreed
+A2A production's final artifact, including its metadata, or its declared
+production failure, with a decimal score between 0 and 1.
+Each participant evaluates the other's contribution; signed ratings enter
+a chained public journal, with a signed confirmation returned to the caller.
 
 ## Detailed description
 
@@ -30,8 +29,10 @@ key storage.
 ### What a rating evaluates
 
 A rating evaluates **the other participant's contribution to an agreed
-production**. It is attached to one designated final artifact, or to a signed
-declaration that the accepted production did not produce that artifact.
+production**. It is attached to one designated final artifact, including its
+content and business metadata, or to a signed declaration that the accepted
+production did not produce that artifact. The metadata is part of what can
+be evaluated and is covered by the artifact's signed content commitment.
 
 | Who rates whom? | What is evaluated? |
 | --- | --- |
@@ -55,7 +56,8 @@ business contents.
 
 The provider then signs one of two results:
 
-- **Artifact produced:** a reference to the designated final artifact.
+- **Artifact produced:** a reference and digest binding the designated final
+  artifact, including its content and business metadata.
 - **Production failed:** an explicit declaration that the accepted production
   ended without that artifact.
 
@@ -72,10 +74,15 @@ rating coverage.
 
 ### Submitting a rating
 
-Either participant may independently give the other one score from 1 to 5:
-very poor, poor, adequate, good or excellent. The design partner defines the
-concrete business criteria behind this scale. The library does not turn a
-technical success or failure into an automatic score.
+Either participant may independently supply a **decimal score between 0 and
+1**, including both endpoints. A higher value means a better contribution
+under the agent's evaluation criteria. An absent rating is distinct from zero.
+
+The agent or its developer is responsible for computing the score and
+passing it to the library. The library does not choose it. The design partner
+defines the concrete business criteria behind the scale; a value such as
+`0.77` is not automatically a 77% probability of success. Decimal precision
+does not make the assessment objective or comparable across unrelated uses.
 
 The author signs the score and its reference to the agreed production and
 result. Aithos checks the signatures, participant identities, evidence and
@@ -86,6 +93,39 @@ optional, published without waiting for the other party, and cannot be edited
 or deleted in V0. There are no free-text reviews or secondary scores.
 Retrying the same submission returns its original confirmation and does not
 create another rating.
+
+### Integration in the agent application
+
+The intended JavaScript API consists of an import and one rating call:
+
+```javascript
+import aithos from "aithos-ranking-a2a";
+const confirmation = await aithos.rank(privateKey, artifact, score);
+```
+
+This is a proposed API, not an existing package. `privateKey` is the agent's
+own signing key, `artifact` the eligible final artifact, and `score` a variable
+computed by the agent or its developer. The library checks the evidence and
+artifact digest, identifies the counterpart and role, signs and submits the
+rating, checks the service's confirmation, and returns it. The application
+decides whether to retain the confirmation.
+
+The developer does not assemble proofs. Our A2A adapter collects the agreement
+and result evidence during the exchange, and `rank` resolves it from the
+artifact's protocol metadata or its associated task context. If necessary,
+the adapter can retrieve that task through its existing A2A client. It still
+verifies every signature and the artifact digest before submitting anything.
+
+This requires integration on both sides and access to their signing keys at
+the appropriate stages. A lookup can recover an existing signature, not
+create a missing one on another agent's behalf. An ordinary artifact without
+that context is insufficient. The two lines show the rating API; the adapter
+setup remains part of implementing the integration. Asking for new agreement
+after production would be a different flow and is outside this V0.
+
+For an explicit production failure, the second argument is the signed failure
+evidence instead of an artifact. The score remains supplied by the caller;
+failure is not automatically scored as zero.
 
 ### Authenticity and confirmation receipts
 
@@ -116,9 +156,14 @@ averages, each with its rating count: **as requester** and **as provider**.
 An agent with no ratings appears as **Not yet rated**. There is no combined
 score or global leaderboard.
 
-The service does not receive the production terms, artifact bodies, messages,
-product details or amounts. Participant relationships and rating evidence
-are public. V0 signs the final artifact's reference, not its contents.
+The service is accessible without an account or API key. It does not receive
+the production terms, artifact bodies, business metadata, messages, product
+details or amounts. Participant relationships, rating evidence and artifact
+digests are public. The content commitment includes the artifact and its
+business metadata; protocol receipts are handled separately to avoid a
+circular signature. Anyone holding the private artifact and its salt can
+verify its digest. A URL part commits to the URL, not future content served
+at that address.
 
 ### Scope of the first version
 
