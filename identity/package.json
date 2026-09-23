@@ -12,6 +12,7 @@
 	"scripts": {
 		"test": "bun test tests/signatures.test.ts tests/identity.test.ts tests/http.test.ts",
 		"test:integration": "bun test tests/harness.test.ts",
+		"test:partner": "node scripts/test-harness.mjs",
 		"typecheck": "tsc --noEmit",
 		"typecheck:integration": "tsc --noEmit -p tsconfig.integration.json",
 		"prepare:harness": "node scripts/prepare-harness.mjs",

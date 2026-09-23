@@ -37,6 +37,7 @@ bun run test
 bun run prepare:harness
 bun run typecheck:integration
 bun run test:integration
+bun run test:partner
 bun run demo
 ```
 

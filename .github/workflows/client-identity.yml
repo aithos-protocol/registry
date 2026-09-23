@@ -29,8 +29,8 @@ jobs:
       - run: bun audit
       - run: bun run prepare:harness
       - run: bun run typecheck:integration && bun run test:integration
-      - run: bun test
-        working-directory: identity/.fixtures/harness
+      - name: Partner suite (fresh process per file)
+        run: bun run test:partner
       - run: bun run demo
       - run: bun run build:lambda
       - run: node --input-type=module -e "import('./dist/lambda.mjs').then(m => { if (typeof m.handler !== 'function') process.exit(1); })"

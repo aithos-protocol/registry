@@ -91,6 +91,17 @@ not changed. This throttle is best-effort, not an isolation or cost guarantee.
 - The new GitHub workflow repeats unit/integration/demo/build/Terraform checks
   without AWS credentials or a deployment step. Its remote outcome is available
   in the feature branch's Actions runs; it is separate from partner upstream CI.
+- The first Linux CI run passed all Aithos tests but exposed order-dependent
+  global OpenTelemetry state in the upstream suite (139 passed, 1 failed).
+  It was reproduced **without our patch**, at upstream `51efcee`, with
+  `bun test ./tests/app/bootstrap.test.ts ./tests/observability/langfuse-tracing.test.ts ./tests/runtime/langgraph-runtime.test.ts`:
+  19 passed, 1 failed. `langgraph-runtime.ts` caches its tracer at module load;
+  another test registers a provider then calls `trace.disable()`, leaving the
+  cached tracer bound to the previous provider. Our `test:partner` runner executes
+  every tracked test file in a fresh process, preserving all assertions and
+  failing on any error. No test is excluded and no upstream runtime change is
+  bundled into the identity proposal. A partner fix for same-process test
+  isolation remains separate work.
 
 Next validation: review this boundary and policy with the partner, then run an
 authorized sandbox Shopware + real caller-agent exercise. Do not silently enable
