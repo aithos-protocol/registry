@@ -1,4 +1,5 @@
 environment      = "prod"
+aws_account_id   = "128066560720"
 hostname         = "registry.aithos.world"
 parent_zone_name = "aithos.world"
 

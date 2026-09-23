@@ -8,6 +8,22 @@ Account preparation — the accounts themselves, SSO access and the Terraform
 state bucket — is in [`ACCOUNT-SETUP.md`](ACCOUNT-SETUP.md) and happens once,
 before any of this.
 
+## Existing targets (verified 2026-09-23)
+
+| Environment | Account | Local SSO profile | Hostname |
+| --- | --- | --- | --- |
+| dev | `373665157800` | `registry-dev` | `registry-dev.aithos.world` |
+| prod | `128066560720` | `aithos-prod` | `registry.aithos.world` |
+
+Both environments already exist. Do not repeat their first-deployment DNS or
+state-bucket bootstrap. A local profile named `registry-prod` currently refers
+to a different account; use STS to confirm the actual account, never the label.
+The backend configurations and both AWS providers pin their expected account.
+Use a separate `TF_DATA_DIR` per environment when switching targets so one
+working directory cannot silently retain the other environment's backend.
+The following bootstrap sections describe creating an environment, not the
+current existence of these two deployments.
+
 ## What it creates
 
 | | |
@@ -41,14 +57,11 @@ and its intent is not documented here.
 Development therefore runs in `us-east-1`, which is where CloudFront requires
 its certificate anyway, so the whole stack sits in one region.
 
-**The production region is a separate, open decision.** Nothing technical
-argues for Europe — every card this registry holds is public by design, so
-there is no personal data and no jurisdiction question, and CloudFront serves
-readers from an edge near them whatever the origin region. The argument for
-Europe is commercial: a Belgian company selling trust infrastructure, hosted
-entirely in the United States, is a question that will be asked. Answering it
-means amending the service control policy, which is a decision for whoever set
-it, not a workaround.
+**Production also runs in `us-east-1`**, per the decision recorded in
+`RUNBOOK-PROD.md` on 2026-08-31. Moving either environment to Europe would
+require reviewing the organization's service control policy first. This stack
+stores public Agent Cards; any future service collecting private identity or
+audit data needs its own data-handling and hosting review.
 
 `var.region` deliberately has no default, so no environment inherits a region
 by accident. The `us_east_1` provider alias is kept even though development
@@ -114,8 +127,8 @@ terraform output nameservers
 **3. Delegate, by hand, in the account holding `aithos.world`**
 
 The parent zone is `Z09988302Y6VWTN77SVQ8` in account `128066560720`
-(`aithos-prod`). It holds 11 records and none of them mention `registry`, so
-both hostnames are free.
+(`aithos-prod`). The dev and prod registry hostnames are already delegated;
+do not overwrite their records when bootstrapping a different environment.
 
 Create an `NS` record for `registry-dev.aithos.world` there, pointing at the
 four nameservers from step 2. Wait for it to resolve:

@@ -11,9 +11,14 @@ zone, so NS delegation is a same-account step — and `write_rate_limit = 20`.
 
 ## 0. Preconditions — all of them, no exceptions
 
-- The three leaked tokens (two GitHub PATs, one crates.io) are **revoked** and
-  `.env` is gone. Nothing below happens first.
-- An SSO profile for aithos-prod exists (`aws sso login --profile registry-prod`).
+- The previously leaked tokens (two GitHub PATs, one crates.io) must remain
+  revoked. Never reuse them. Temporary AWS credentials, if supplied in a local
+  ignored file, must not be committed, printed or copied into deployment notes;
+  restrict that file to mode `0600`.
+- An SSO profile for the actual production account exists
+  (`aws sso login --profile aithos-prod`). Verify the account with STS: profile
+  names alone are not proof of the target. The backend and both providers require
+  account `128066560720`.
 - The state bucket exists, made by hand per `ACCOUNT-SETUP.md`:
   `aithos-registry-tfstate-prod-128066560720` — versioned, encrypted, private.
 - Development is healthy at the commit being deployed: CI green, dev applied
@@ -47,7 +52,7 @@ that failed**.
 
 ```sh
 cd infra
-export AWS_PROFILE=registry-prod
+export AWS_PROFILE=aithos-prod
 terraform init -reconfigure -backend-config=env/prod.backend.hcl
 
 # Phase 1: the zone alone.
