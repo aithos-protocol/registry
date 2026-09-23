@@ -1,4 +1,5 @@
 environment      = "dev"
+aws_account_id   = "373665157800"
 hostname         = "registry-dev.aithos.world"
 parent_zone_name = "aithos.world"
 

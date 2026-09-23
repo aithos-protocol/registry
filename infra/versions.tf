@@ -23,7 +23,8 @@ terraform {
 }
 
 provider "aws" {
-  region = var.region
+  region              = var.region
+  allowed_account_ids = [var.aws_account_id]
 
   default_tags {
     tags = {
@@ -38,10 +39,11 @@ provider "aws" {
 # of the stack lives. This alias exists for that one resource.
 #
 # It stays even when var.region is already us-east-1. Removing it would bake in
-# an assumption about the region, and the production region is not settled.
+# an assumption about the region; both current environments use us-east-1.
 provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
+  alias               = "us_east_1"
+  region              = "us-east-1"
+  allowed_account_ids = [var.aws_account_id]
 
   default_tags {
     tags = {

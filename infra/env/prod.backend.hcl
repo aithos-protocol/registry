@@ -7,3 +7,4 @@
 bucket = "aithos-registry-tfstate-prod-128066560720"
 key    = "agent-card-registry/prod.tfstate"
 region = "us-east-1"
+allowed_account_ids = ["128066560720"]
