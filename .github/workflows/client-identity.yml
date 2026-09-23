@@ -1,0 +1,46 @@
+name: client-identity-pilot
+
+on:
+  push:
+    branches: [main, 'codex/client-identity-v0']
+    paths: ['identity/**', '.github/workflows/client-identity.yml']
+  pull_request:
+    paths: ['identity/**', '.github/workflows/client-identity.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: identity
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run format:check && bun run typecheck && bun run test
+      - run: bun audit
+      - run: bun run prepare:harness
+      - run: bun run typecheck:integration && bun run test:integration
+      - run: bun test
+        working-directory: identity/.fixtures/harness
+      - run: bun run demo
+      - run: bun run build:lambda
+      - run: node --input-type=module -e "import('./dist/lambda.mjs').then(m => { if (typeof m.handler !== 'function') process.exit(1); })"
+        env:
+          IDENTITY_ORIGIN: https://identity.test
+          IDENTITY_TABLE: synthetic-test
+          IDENTITY_SECRET_ARN: synthetic-test
+          IDENTITY_RETENTION_DAYS: '7'
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.5
+      - run: terraform -chdir=infra fmt -check && terraform -chdir=infra init -backend=false && terraform -chdir=infra validate
+      # Deliberately no AWS credentials, deploy step or production access.

@@ -1,0 +1,13 @@
+{
+	"source": "https://www.rfc-editor.org/rfc/rfc9421.html#appendix-B.2.4",
+	"scope": "Cryptographic primitive only: the RFC response example is not an Aithos request.",
+	"public_jwk": {
+		"kty": "EC",
+		"crv": "P-256",
+		"x": "qIVYZVLCrPZHGHjP17CTW0_-D9Lfw0EkjqF7xB4FivA",
+		"y": "Mc4nN9LTDOBhfoUeg8Ye9WedFRhnZXZJA12Qp0zZ6F0"
+	},
+	"signature_base": "\"@status\": 200\n\"content-type\": application/json\n\"content-digest\": sha-512=:mEWXIS7MaLRuGgxOBdODa3xqM1XdEvxoYhvlCFJ41QJgJc4GTsPp29l5oGX69wWdXymyU0rjJuahq4l5aGgfLQ==:\n\"content-length\": 23\n\"@signature-params\": (\"@status\" \"content-type\" \"content-digest\" \"content-length\");created=1618884473;keyid=\"test-key-ecc-p256\"",
+	"signature_base64": "wNmSUAhwb5LxtOtOpNa6W5xj067m5hFrj0XQ4fvpaCLx0NKocgPquLgyahnzDnDAUy5eCdlYUEkLIj+32oiasw==",
+	"expected": "valid"
+}

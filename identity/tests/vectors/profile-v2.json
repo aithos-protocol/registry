@@ -1,0 +1,147 @@
+{
+	"profile": "https://aithos-protocol.github.io/agent-request-auth/v2",
+	"public_jwk": {
+		"crv": "P-256",
+		"kty": "EC",
+		"x": "axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY",
+		"y": "T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+	},
+	"key_thumbprint": "xx0BcA-wMohw8atYDJOe6peGModklG2wRHBlXHMvl0M",
+	"test_private_scalar": "1",
+	"vectors": [
+		{
+			"id": "empty",
+			"method": "GET",
+			"url": "https://api.example.test/",
+			"headers": [
+				[
+					"Content-Digest",
+					"sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:"
+				],
+				[
+					"Signature-Input",
+					"fixture=(\"@method\" \"@target-uri\" \"content-digest\");created=1700000000;keyid=\"fixture:key-1\";tag=\"https://aithos-protocol.github.io/agent-request-auth/v2\""
+				],
+				[
+					"Signature",
+					"fixture=:oq+LcBHhbaHuFzHQJwnaZLQXOtBy2Wu1NNtB0C+UUjuVabeUWAAcqo1JkUOtvXV07xJPZeaUFHKQNLe8NtW8/Q==:"
+				]
+			],
+			"body_base64": "",
+			"content_digest_base64": "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+			"signature_base": "\"@method\": GET\n\"@target-uri\": https://api.example.test/\n\"content-digest\": sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\");created=1700000000;keyid=\"fixture:key-1\";tag=\"https://aithos-protocol.github.io/agent-request-auth/v2\"",
+			"expected": "valid"
+		},
+		{
+			"id": "a2a-stock",
+			"method": "POST",
+			"url": "https://api.example.test:8443/a2a/%73tock?symbol=ACME&limit=2",
+			"headers": [
+				["Content-Type", "application/json"],
+				[
+					"A2A-Extensions",
+					"https://aithos-protocol.github.io/agent-request-auth/v2, https://example.test/extensions/audit"
+				],
+				["A2A-Version", "1.0"],
+				["Content-Encoding", "identity"],
+				["Cache-Control", "max-age=60"],
+				["Cache-Control", "must-revalidate"],
+				[
+					"Content-Digest",
+					"sha-256=:v3KHnyqhTcQfkSpFJMto+PDzHK3yyJ7vEq1YLlH9mOY=:"
+				],
+				[
+					"Signature-Input",
+					"fixture=(\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"content-encoding\" \"a2a-extensions\" \"a2a-version\" \"cache-control\");created=1700000000;keyid=\"fixture:key-1\";tag=\"https://aithos-protocol.github.io/agent-request-auth/v2\""
+				],
+				[
+					"Signature",
+					"fixture=:J8KTKMG3NKJ7OH0DbEFupjdXAmlXzJdCVnORIft8fdNDk2hDKIrf3CBv0C5/bOZ/+j1S6SBzWQENReGB7AWq1Q==:"
+				]
+			],
+			"body_base64": "eyJzeW1ib2wiOiJBQ01FIiwicXVhbnRpdHkiOjJ9",
+			"content_digest_base64": "v3KHnyqhTcQfkSpFJMto+PDzHK3yyJ7vEq1YLlH9mOY=",
+			"signature_base": "\"@method\": POST\n\"@target-uri\": https://api.example.test:8443/a2a/%73tock?symbol=ACME&limit=2\n\"content-digest\": sha-256=:v3KHnyqhTcQfkSpFJMto+PDzHK3yyJ7vEq1YLlH9mOY=:\n\"content-type\": application/json\n\"content-encoding\": identity\n\"a2a-extensions\": https://aithos-protocol.github.io/agent-request-auth/v2, https://example.test/extensions/audit\n\"a2a-version\": 1.0\n\"cache-control\": max-age=60, must-revalidate\n\"@signature-params\": (\"@method\" \"@target-uri\" \"content-digest\" \"content-type\" \"content-encoding\" \"a2a-extensions\" \"a2a-version\" \"cache-control\");created=1700000000;keyid=\"fixture:key-1\";tag=\"https://aithos-protocol.github.io/agent-request-auth/v2\"",
+			"expected": "valid"
+		},
+		{
+			"id": "reordered",
+			"method": "post",
+			"url": "https://api.example.test/%2f?b=2&a=%2F&a=+",
+			"headers": [
+				["X-Empty", ""],
+				["Authorization", "Bearer unrelated"],
+				[
+					"Content-Digest",
+					"sha-512=:H+IrWAJNoYpxGGhhxsBuKMQegvl7wcAAHLOi+EXOpXKbw2TStkefXi7Q7kOFwJZ9kpRhGVnoekgjkGcR7e/fvw==:, sha-256=:f2Tg+1kc2p+NHa9NP5Zs4AeIgGp+w3qiBm1zGjyT/Lw=:"
+				],
+				[
+					"Signature-Input",
+					"fixture=(\"x-empty\" \"content-digest\" \"@target-uri\" \"@method\");tag=\"https://aithos-protocol.github.io/agent-request-auth/v2\";alg=\"ecdsa-p256-sha256\";keyid=\"fixture:key-1\";created=1700000000"
+				],
+				[
+					"Signature",
+					"fixture=:2YfAJhyEFiHuw86CVu7E2Ku28JMY3/jkbivjxeouYT8L8DWb2haSF5tzprx9JdBK8Mcj9BYatnJOb7E0Fyv8kA==:"
+				]
+			],
+			"body_base64": "cHJvZmlsZS12MgD/",
+			"content_digest_base64": "f2Tg+1kc2p+NHa9NP5Zs4AeIgGp+w3qiBm1zGjyT/Lw=",
+			"signature_base": "\"x-empty\": \n\"content-digest\": sha-512=:H+IrWAJNoYpxGGhhxsBuKMQegvl7wcAAHLOi+EXOpXKbw2TStkefXi7Q7kOFwJZ9kpRhGVnoekgjkGcR7e/fvw==:, sha-256=:f2Tg+1kc2p+NHa9NP5Zs4AeIgGp+w3qiBm1zGjyT/Lw=:\n\"@target-uri\": https://api.example.test/%2f?b=2&a=%2F&a=+\n\"@method\": post\n\"@signature-params\": (\"x-empty\" \"content-digest\" \"@target-uri\" \"@method\");tag=\"https://aithos-protocol.github.io/agent-request-auth/v2\";alg=\"ecdsa-p256-sha256\";keyid=\"fixture:key-1\";created=1700000000",
+			"expected": "valid"
+		}
+	],
+	"mutations": [
+		{
+			"id": "body-changed",
+			"vector": "a2a-stock",
+			"change": "append-body-byte",
+			"expected": "digest-mismatch"
+		},
+		{
+			"id": "method-changed",
+			"vector": "empty",
+			"change": "method",
+			"value": "POST",
+			"expected": "signature-invalid"
+		},
+		{
+			"id": "path-changed",
+			"vector": "empty",
+			"change": "url",
+			"value": "https://api.example.test/other?",
+			"expected": "signature-invalid"
+		},
+		{
+			"id": "covered-field-changed",
+			"vector": "a2a-stock",
+			"change": "header",
+			"name": "A2A-Version",
+			"value": "2.0",
+			"expected": "signature-invalid"
+		},
+		{
+			"id": "unsigned-required-field-added",
+			"vector": "empty",
+			"change": "append-header",
+			"name": "Content-Type",
+			"value": "application/json",
+			"expected": "malformed"
+		},
+		{
+			"id": "singleton-repeated",
+			"vector": "a2a-stock",
+			"change": "append-header",
+			"name": "content-type",
+			"value": "application/json",
+			"expected": "malformed"
+		},
+		{
+			"id": "duplicate-digest",
+			"vector": "empty",
+			"change": "append-header",
+			"name": "Content-Digest",
+			"value": "sha-256=:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=:",
+			"expected": "malformed"
+		}
+	]
+}

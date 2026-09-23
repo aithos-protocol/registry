@@ -1,0 +1,929 @@
+diff --git a/docs/caller-admission-pilot.md b/docs/caller-admission-pilot.md
+new file mode 100644
+index 0000000..40f6046
+--- /dev/null
++++ b/docs/caller-admission-pilot.md
+@@ -0,0 +1,35 @@
++# Optional caller admission pilot
++
++This proposal adds provider-neutral hooks. It adds no Aithos dependency, default
++network call, or changed admission policy when the hooks are omitted.
++
++Pass the **same object** as `callerAccess` to `createSalesAgentHarnessApp` and as
++`admission` to `createSalesAgentHttpHandler`. Its request scope must be established
++before invoking the handler callback. Never derive `TrustedCaller` from request
++JSON or an unverified identity/session header.
++
++The implementation must verify identity, evaluate policy and durably reserve audit
++events before it calls the runtime or commerce tools. `allows` is enforced for
++model-selected tools as well as direct commerce requests; merchant policy still
++applies afterwards. `aroundSession` and `aroundAction` instrument outcomes without
++receiving message text, tokens, product details or customer data.
++
++Session ownership is persisted with session creation in all built-in stores.
++Existing ownerless sessions are **not** automatically adopted. Duplicate session
++IDs cannot replace a previous owner's record, including expired records. Clients
++must create a fresh session after expiry. Commerce context remains server-only.
++In admission mode, external session creation cannot inject a Shopware context
++token, customer context or non-A2A channel. The SQLite migration adds a nullable
++column and preserves existing rows; existing SQLite installations should be backed
++up before migration as usual. File stores now validate persisted session fields.
++
++Agent Card extensions are supplied by the admission implementation. Request body
++debug logging is disabled while admission is active. This hook does not implement
++an A2A client, replace the runtime, or expand this harness's synchronous A2A binding.
++Long tasks, streaming, checkout and a real Shopware/LLM exercise are outside the
++synthetic Aithos identity pilot.
++
++The generic contract and session-store tests need no provider. The complementary
++Aithos repository contains an end-to-end fixture with a deterministic runtime and
++fake commerce adapter. No upstream PR or new package publication is implied by
++this local proposal.
+diff --git a/src/app/a2a-agent-card.ts b/src/app/a2a-agent-card.ts
+index 3a6b191..e253b26 100644
+--- a/src/app/a2a-agent-card.ts
++++ b/src/app/a2a-agent-card.ts
+@@ -1,7 +1,12 @@
++import type { RequestAdmission } from '../contracts/caller-access.js';
+ import type { AgentHarnessConfig } from '../contracts/config.js';
+ import { a2aProtocolVersion } from './a2a-constants.js';
+ 
+-export function createA2aAgentCard(origin: string, config?: AgentHarnessConfig): unknown {
++export function createA2aAgentCard(
++  origin: string,
++  config?: AgentHarnessConfig,
++  extensions?: RequestAdmission['extensions'],
++): unknown {
+   const profile = config?.agentProfile;
+ 
+   return {
+@@ -11,6 +16,7 @@ export function createA2aAgentCard(origin: string, config?: AgentHarnessConfig):
+     protocolVersion: a2aProtocolVersion,
+     url: origin,
+     capabilities: {
++      ...(extensions ? { extensions } : {}),
+       streaming: false,
+       pushNotifications: false,
+     },
+diff --git a/src/app/a2a-message.ts b/src/app/a2a-message.ts
+index 7325f92..df5f255 100644
+--- a/src/app/a2a-message.ts
++++ b/src/app/a2a-message.ts
+@@ -2,6 +2,7 @@ import type { Ap2PaymentMandate } from '../contracts/commerce.js';
+ import type { AgentRuntimeResponse } from '../runtime/agent-runtime.js';
+ import type { A2aMessage, A2aPart } from './a2a-schemas.js';
+ import { ap2MandateMetadataSchema, sendMessageSchema } from './a2a-schemas.js';
++import { HttpInputError } from './http-responses.js';
+ import type { ChatInput, CreateAgentSessionInput } from './sales-agent-app.js';
+ 
+ export interface A2aHttpApp {
+@@ -82,26 +83,14 @@ function createCompletedTask(
+ function buildCheckoutMetadata(response: AgentRuntimeResponse): Record<string, unknown> {
+   const checkout = response.completedCheckout;
+ 
+-  return compact({
++  const metadata = {
+     orderId: checkout?.orderId,
+     x402: checkout?.x402,
+     continueUrl: checkout?.continueUrl,
+     ap2MerchantAuthorization: checkout?.ap2MerchantAuthorization,
+     checkoutTerms: response.pendingCheckoutTerms,
+-  });
+-}
+-
+-/** Drop `undefined` entries, so optional fields build without per-key ternaries. */
+-function compact<T extends Record<string, unknown>>(obj: T): Partial<T> {
+-  const result: Partial<T> = {};
+-
+-  for (const [key, value] of Object.entries(obj)) {
+-    if (value !== undefined) {
+-      (result as Record<string, unknown>)[key] = value;
+-    }
+-  }
+-
+-  return result;
++  };
++  return Object.fromEntries(Object.entries(metadata).filter(([, value]) => value !== undefined));
+ }
+ 
+ function extractAp2Mandate(message: A2aMessage): Ap2PaymentMandate | undefined {
+@@ -127,6 +116,13 @@ function extractSupportedPaymentHandlers(message: A2aMessage): readonly string[]
+ 
+ function extractAgentSessionId(message: A2aMessage): string | null {
+   const metadataSessionId = message.metadata?.agentSessionId;
++  if (
++    typeof metadataSessionId === 'string' &&
++    message.contextId &&
++    metadataSessionId !== message.contextId
++  ) {
++    throw new HttpInputError('Conflicting A2A session identifiers');
++  }
+ 
+   if (typeof metadataSessionId === 'string' && metadataSessionId.length > 0) {
+     return metadataSessionId;
+diff --git a/src/app/http-handler-types.ts b/src/app/http-handler-types.ts
+index 5ef06c1..c6ead60 100644
+--- a/src/app/http-handler-types.ts
++++ b/src/app/http-handler-types.ts
+@@ -1,4 +1,5 @@
+ import type { CommerceApiRequest } from '../api/harness-api.js';
++import type { RequestAdmission } from '../contracts/caller-access.js';
+ import type { Ap2PaymentMandate } from '../contracts/commerce.js';
+ import type { AgentHarnessConfig } from '../contracts/config.js';
+ import type { PublicAgentSession } from '../contracts/session.js';
+@@ -32,6 +33,7 @@ export interface CheckoutResumeConfig {
+ }
+ 
+ export interface CreateSalesAgentHttpHandlerInput {
++  readonly admission?: RequestAdmission;
+   readonly app: SalesAgentHttpApp;
+   readonly agentConfig?: AgentHarnessConfig | undefined;
+   readonly ucpPlatformProfile?: unknown;
+diff --git a/src/app/http-handler.ts b/src/app/http-handler.ts
+index a64b8f2..eaa0aa7 100644
+--- a/src/app/http-handler.ts
++++ b/src/app/http-handler.ts
+@@ -1,4 +1,5 @@
+ import { z } from 'zod';
++import { CallerAccessDenied } from '../contracts/caller-access.js';
+ 
+ import { createA2aAgentCard } from './a2a-agent-card.js';
+ import { a2aProtocolVersion } from './a2a-constants.js';
+@@ -44,7 +45,10 @@ export function createSalesAgentHttpHandler(
+   input: CreateSalesAgentHttpHandlerInput,
+ ): SalesAgentHttpHandler {
+   return {
+-    handle: async (request) => handleRequest(input, request),
++    handle: async (request) =>
++      input.admission
++        ? input.admission.run(request, (admitted) => handleRequest(input, admitted))
++        : handleRequest(input, request),
+   };
+ }
+ 
+@@ -58,7 +62,8 @@ async function handleRequest(
+   if (request.method !== 'GET') {
+     // Bodies can contain buyer PII (email, phone, shipping address) and chat
+     // content, so they are only logged when explicitly enabled for debugging.
+-    const body = input.debugLogRequestBodies ? ` ${await request.clone().text()}` : '';
++    const body =
++      input.debugLogRequestBodies && !input.admission ? ` ${await request.clone().text()}` : '';
+     log(`→ ${request.method} ${url.pathname}${body}`);
+   }
+ 
+@@ -70,6 +75,7 @@ async function handleRequest(
+     log(`← ${response.status} (${Date.now() - start}ms)`);
+     return response;
+   } catch (error) {
++    if (error instanceof CallerAccessDenied) return jsonResponse({ error: 'Forbidden' }, 403);
+     const status = isInputError(error) ? 400 : 500;
+     logError(`← ${status} error (${Date.now() - start}ms)`, error);
+     return jsonResponse(toErrorResponse(error), status);
+@@ -92,7 +98,7 @@ function handleGetRequest(input: CreateSalesAgentHttpHandlerInput, url: URL): Re
+   }
+ 
+   if (url.pathname === '/.well-known/agent-card.json') {
+-    return a2aResponse(createA2aAgentCard(url.origin, input.agentConfig));
++    return agentCardResponse(input, url.origin);
+   }
+ 
+   if (url.pathname === '/examples/customer-ui') {
+@@ -120,6 +126,10 @@ function handleGetRequest(input: CreateSalesAgentHttpHandlerInput, url: URL): Re
+   return jsonResponse({ error: 'Not found' }, 404);
+ }
+ 
++function agentCardResponse(input: CreateSalesAgentHttpHandlerInput, origin: string): Response {
++  return a2aResponse(createA2aAgentCard(origin, input.agentConfig, input.admission?.extensions));
++}
++
+ function checkoutResumeResponse(
+   url: URL,
+   checkoutResume: NonNullable<CreateSalesAgentHttpHandlerInput['checkoutResume']>,
+@@ -187,6 +197,11 @@ async function handleJsonRpcRequest(app: SalesAgentHttpApp, body: unknown): Prom
+         );
+     }
+   } catch (error) {
++    if (error instanceof CallerAccessDenied)
++      return jsonResponse(
++        { jsonrpc: '2.0', id: rpc.id, error: { code: -32000, message: 'Forbidden' } },
++        403,
++      );
+     logError('JSONRPC error', error);
+     const message =
+       error instanceof Error && isInputError(error) ? error.message : 'Internal error';
+diff --git a/src/app/sales-agent-app-actions.ts b/src/app/sales-agent-app-actions.ts
+index c07af7c..da55773 100644
+--- a/src/app/sales-agent-app-actions.ts
++++ b/src/app/sales-agent-app-actions.ts
+@@ -4,12 +4,14 @@ import { InMemoryHandoffStore } from '../handoff/handoff-store.js';
+ import { InMemoryCheckoutIdempotencyStore } from '../harness/checkout-idempotency-store.js';
+ import { HarnessCore } from '../harness/harness-core.js';
+ import { InMemoryAuditLogger } from '../observability/audit-log.js';
++import { CallerSessionStore } from '../session/caller-session-store.js';
+ import { InMemoryConversationStore } from '../session/conversation-store.js';
+ import { InMemorySessionStore } from '../session/session-store.js';
+ import type { AppContext, CreateSalesAgentHarnessAppInput } from './sales-agent-app-types.js';
+ 
+ export function createAppContext(input: CreateSalesAgentHarnessAppInput): AppContext {
+   const now = input.now ?? (() => new Date());
++  const store = input.sessionStore ?? new InMemorySessionStore({ now });
+ 
+   return {
+     auditLogger: input.auditLogger ?? new InMemoryAuditLogger(),
+@@ -19,7 +21,7 @@ export function createAppContext(input: CreateSalesAgentHarnessAppInput): AppCon
+     createId: input.createId ?? (() => randomUUID()),
+     handoffStore: input.handoffStore ?? new InMemoryHandoffStore({ now }),
+     now,
+-    sessionStore: input.sessionStore ?? new InMemorySessionStore({ now }),
++    sessionStore: input.callerAccess ? new CallerSessionStore(store, input.callerAccess) : store,
+   };
+ }
+ 
+@@ -39,6 +41,7 @@ export function createHarness(
+     handoffStore: context.handoffStore,
+     sessionStore: context.sessionStore,
+     now: context.now,
++    ...(input.callerAccess ? { callerAccess: input.callerAccess } : {}),
+     ...checkoutHandoffOptions,
+   });
+ }
+diff --git a/src/app/sales-agent-app-types.ts b/src/app/sales-agent-app-types.ts
+index 1ba48d8..99371f3 100644
+--- a/src/app/sales-agent-app-types.ts
++++ b/src/app/sales-agent-app-types.ts
+@@ -1,5 +1,6 @@
+ import type { A2aApi } from '../api/a2a-api.js';
+ import type { CustomerApi } from '../api/customer-api.js';
++import type { CallerAccess } from '../contracts/caller-access.js';
+ import type {
+   Ap2PaymentMandate,
+   CheckoutHandoffResult,
+@@ -56,6 +57,7 @@ export interface SalesAgentHarnessApp {
+ }
+ 
+ export interface CreateSalesAgentHarnessAppInput {
++  readonly callerAccess?: CallerAccess;
+   readonly config: AgentHarnessConfig;
+   readonly adapter: CommerceAdapter;
+   readonly checkoutHandoffMode?: 'local' | 'adapter';
+diff --git a/src/app/sales-agent-app.ts b/src/app/sales-agent-app.ts
+index 18404b4..502890c 100644
+--- a/src/app/sales-agent-app.ts
++++ b/src/app/sales-agent-app.ts
+@@ -1,5 +1,6 @@
+ import { createA2aApi } from '../api/a2a-api.js';
+ import { createCustomerApi } from '../api/customer-api.js';
++import { CallerAccessDenied } from '../contracts/caller-access.js';
+ import { createExecutableToolRegistry } from '../harness/executable-tool-registry.js';
+ import { createAppContext, createHarness } from './sales-agent-app-actions.js';
+ import type {
+@@ -26,6 +27,11 @@ export function createSalesAgentHarnessApp(
+   const runtime = input.runtimeFactory({
+     tools: createExecutableToolRegistry(input.config, harness),
+   });
++  const assertOwner = (id: string): void => {
++    if (input.callerAccess && !context.sessionStore.getSession(id, input.config.merchantId)) {
++      throw new CallerAccessDenied();
++    }
++  };
+ 
+   return {
+     auditLogger: context.auditLogger,
+@@ -38,9 +44,13 @@ export function createSalesAgentHarnessApp(
+     chat: (chatInput) => chat(input, context, runtime, harness, chatInput),
+     validateCheckoutHandoff: (handoffInput) =>
+       validateCheckoutHandoff(input, context, handoffInput),
+-    recordAp2Mandate: (agentSessionId, mandate) =>
+-      harness.recordAp2Mandate(agentSessionId, mandate),
+-    recordPaymentCapability: (agentSessionId, supportedPaymentHandlers) =>
+-      harness.recordPaymentCapability(agentSessionId, supportedPaymentHandlers),
++    recordAp2Mandate: (agentSessionId, mandate) => {
++      assertOwner(agentSessionId);
++      harness.recordAp2Mandate(agentSessionId, mandate);
++    },
++    recordPaymentCapability: (agentSessionId, supportedPaymentHandlers) => {
++      assertOwner(agentSessionId);
++      harness.recordPaymentCapability(agentSessionId, supportedPaymentHandlers);
++    },
+   };
+ }
+diff --git a/src/app/sales-agent-session-actions.ts b/src/app/sales-agent-session-actions.ts
+index aa1a9c3..e413639 100644
+--- a/src/app/sales-agent-session-actions.ts
++++ b/src/app/sales-agent-session-actions.ts
+@@ -1,3 +1,4 @@
++import { CallerAccessDenied } from '../contracts/caller-access.js';
+ import { recordAppAudit } from './sales-agent-app-audit.js';
+ import type {
+   AppContext,
+@@ -37,6 +38,15 @@ function validateSessionInput(
+   input: CreateSalesAgentHarnessAppInput,
+   sessionInput: CreateAgentSessionInput,
+ ): void {
++  if (
++    input.callerAccess &&
++    (sessionInput.channel !== 'a2a' ||
++      sessionInput.shopwareContextToken ||
++      sessionInput.customerContext ||
++      (sessionInput.ttlMs ?? 0) > DEFAULT_SESSION_TTL_MS)
++  ) {
++    throw new CallerAccessDenied();
++  }
+   if (!input.config.policies.allowedChannels.includes(sessionInput.channel)) {
+     throw new Error(`Channel ${sessionInput.channel} is not enabled for this agent`);
+   }
+diff --git a/src/contracts/caller-access.ts b/src/contracts/caller-access.ts
+new file mode 100644
+index 0000000..5eeb601
+--- /dev/null
++++ b/src/contracts/caller-access.ts
+@@ -0,0 +1,31 @@
++/** Optional server-owned admission boundary. Never populate it from request JSON. */
++export interface TrustedCaller {
++  readonly identityId: string;
++  readonly merchantId: string;
++  readonly kind: 'key' | 'provisional';
++}
++
++export interface CallerAccess {
++  current(): TrustedCaller | undefined;
++  allows(capability: string): boolean;
++  canResume(sessionId: string): boolean;
++  aroundSession<T>(sessionId: string, run: () => T): T;
++  denyAction(capability: string, sessionId: string): void;
++  aroundAction<T>(capability: string, sessionId: string, run: () => Promise<T>): Promise<T>;
++}
++
++export interface RequestAdmission {
++  readonly extensions: readonly {
++    readonly uri: string;
++    readonly description: string;
++    readonly required: boolean;
++    readonly params?: Record<string, string>;
++  }[];
++  run(request: Request, next: (request: Request) => Promise<Response>): Promise<Response>;
++}
++
++export class CallerAccessDenied extends Error {
++  constructor() {
++    super('Caller is not permitted to access this operation or session');
++  }
++}
+diff --git a/src/contracts/session.ts b/src/contracts/session.ts
+index 7162695..8eacf5b 100644
+--- a/src/contracts/session.ts
++++ b/src/contracts/session.ts
+@@ -15,6 +15,8 @@ export interface CommerceContext {
+ }
+ 
+ export interface AgentSession {
++  /** Internal owner established by server admission, never a caller-supplied ID. */
++  readonly callerIdentityId?: string;
+   readonly agentSessionId: string;
+   readonly merchantId: string;
+   readonly agentId: string;
+diff --git a/src/harness/harness-core.ts b/src/harness/harness-core.ts
+index cdfa9a9..9c398b4 100644
+--- a/src/harness/harness-core.ts
++++ b/src/harness/harness-core.ts
+@@ -1,3 +1,4 @@
++import type { CallerAccess } from '../contracts/caller-access.js';
+ import type {
+   Ap2PaymentMandate,
+   CheckoutTerms,
+@@ -22,6 +23,7 @@ import { createHarnessExecutor, type HarnessExecutor } from './harness-executor.
+ import type { HarnessRequest } from './harness-types.js';
+ 
+ export interface HarnessCoreOptions {
++  readonly callerAccess?: CallerAccess;
+   readonly config: AgentHarnessConfig;
+   readonly adapter: CommerceAdapter;
+   readonly auditLogger: AuditLogger;
+@@ -60,6 +62,7 @@ export class HarnessCore {
+       auditLogger: options.auditLogger,
+       sessionStore: options.sessionStore,
+       now: this.#now,
++      ...(options.callerAccess ? { callerAccess: options.callerAccess } : {}),
+     });
+   }
+ 
+diff --git a/src/harness/harness-executor-run.ts b/src/harness/harness-executor-run.ts
+index ea822f5..6ba4b58 100644
+--- a/src/harness/harness-executor-run.ts
++++ b/src/harness/harness-executor-run.ts
+@@ -1,3 +1,4 @@
++import { CallerAccessDenied } from '../contracts/caller-access.js';
+ import type { HarnessCapability } from '../contracts/config.js';
+ import type { AgentSession } from '../contracts/session.js';
+ import type { AuditLogger } from '../observability/audit-log.js';
+@@ -32,6 +33,22 @@ export interface ExecuteHarnessRequestInput<T> {
+ 
+ export async function executeHarnessRequest<T>(
+   input: ExecuteHarnessRequestInput<T>,
++): Promise<HarnessResponse<T>> {
++  const access = input.options.callerAccess;
++  if (access && !access.allows(input.capability)) {
++    access.denyAction(input.capability, input.request.agentSessionId);
++    throw new CallerAccessDenied();
++  }
++  if (access) {
++    return access.aroundAction(input.capability, input.request.agentSessionId, () =>
++      executeAllowedRequest(input),
++    );
++  }
++  return executeAllowedRequest(input);
++}
++
++async function executeAllowedRequest<T>(
++  input: ExecuteHarnessRequestInput<T>,
+ ): Promise<HarnessResponse<T>> {
+   const session = requireSession(input.options, input.request.agentSessionId);
+   const policyDecision = evaluateHarnessPolicy({
+diff --git a/src/harness/harness-executor.ts b/src/harness/harness-executor.ts
+index 0ca9f3c..7367e56 100644
+--- a/src/harness/harness-executor.ts
++++ b/src/harness/harness-executor.ts
+@@ -1,3 +1,4 @@
++import type { CallerAccess } from '../contracts/caller-access.js';
+ import type { CartSummary } from '../contracts/commerce.js';
+ import type { AgentHarnessConfig, HarnessCapability } from '../contracts/config.js';
+ import type { AgentSession } from '../contracts/session.js';
+@@ -19,6 +20,7 @@ export interface HarnessExecutorCartOptions<T> {
+ }
+ 
+ export interface HarnessExecutorOptions {
++  readonly callerAccess?: CallerAccess;
+   readonly config: AgentHarnessConfig;
+   readonly auditLogger: AuditLogger;
+   readonly sessionStore: SessionStore;
+diff --git a/src/index.ts b/src/index.ts
+index f37271a..6a697bf 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -13,6 +13,7 @@ export { UcpAdapter } from './commerce/ucp/ucp-adapter.js';
+ export { FetchUcpClient } from './commerce/ucp/ucp-client.js';
+ export { createUcpPlatformProfile } from './commerce/ucp/ucp-platform-profile.js';
+ export { loadAgentHarnessConfig, parseAgentHarnessConfig } from './config/load-agent-config.js';
++export type * from './contracts/caller-access.js';
+ export type * from './contracts/commerce.js';
+ export type * from './contracts/config.js';
+ export type * from './contracts/policy.js';
+diff --git a/src/session/caller-session-store.ts b/src/session/caller-session-store.ts
+new file mode 100644
+index 0000000..48dac8b
+--- /dev/null
++++ b/src/session/caller-session-store.ts
+@@ -0,0 +1,47 @@
++import { type CallerAccess, CallerAccessDenied } from '../contracts/caller-access.js';
++import type { AgentSession, CommerceContext } from '../contracts/session.js';
++import { type SessionStore, toPublicSession } from './session-store.js';
++
++/** The owner is persisted in the same record as the session, not attached later. */
++export class CallerSessionStore implements SessionStore {
++  constructor(
++    private readonly store: SessionStore,
++    private readonly access: CallerAccess,
++  ) {}
++
++  createSession(session: AgentSession): AgentSession {
++    const caller = this.access.current();
++    if (!caller || caller.merchantId !== session.merchantId) {
++      throw new CallerAccessDenied();
++    }
++    // Reserve a durable audit event before changing session state.
++    return this.access.aroundSession(session.agentSessionId, () =>
++      this.store.createSession({ ...session, callerIdentityId: caller.identityId }),
++    );
++  }
++
++  getSession(id: string, merchantId: string): AgentSession | undefined {
++    const caller = this.access.current();
++    if (!caller || caller.merchantId !== merchantId || !this.access.canResume(id)) {
++      throw new CallerAccessDenied();
++    }
++    const session = this.store.getSession(id, merchantId);
++    if (session && session.callerIdentityId !== caller.identityId) {
++      throw new CallerAccessDenied();
++    }
++    return session;
++  }
++
++  getPublicSession(id: string, merchantId: string) {
++    const session = this.getSession(id, merchantId);
++    return session ? toPublicSession(session) : undefined;
++  }
++
++  setCommerceContext(id: string, context: CommerceContext): AgentSession {
++    const caller = this.access.current();
++    if (!caller || !this.getSession(id, caller.merchantId)) {
++      throw new CallerAccessDenied();
++    }
++    return this.store.setCommerceContext(id, context);
++  }
++}
+diff --git a/src/session/file-session-store.ts b/src/session/file-session-store.ts
+index 5402d63..7e7634e 100644
+--- a/src/session/file-session-store.ts
++++ b/src/session/file-session-store.ts
+@@ -1,5 +1,7 @@
+ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+ import { dirname } from 'node:path';
++import { z } from 'zod';
++import { agentChannels } from '../contracts/config.js';
+ import type { AgentSession, CommerceContext, PublicAgentSession } from '../contracts/session.js';
+ import { isSessionAvailable, type SessionStore, toPublicSession } from './session-store.js';
+ 
+@@ -26,18 +28,17 @@ export class FileSessionStore implements SessionStore {
+     }
+   }
+ 
+-  // fallow-ignore-next-line unused-class-member
+   createSession(session: AgentSession): AgentSession {
+-    const sessions = this.#readSessions().filter(
+-      (candidate) => candidate.agentSessionId !== session.agentSessionId,
+-    );
++    const sessions = this.#readSessions();
++    if (sessions.some((candidate) => candidate.agentSessionId === session.agentSessionId)) {
++      throw new Error('Session identifier already exists');
++    }
+     sessions.push(session);
+     this.#writeSessions(sessions);
+ 
+     return session;
+   }
+ 
+-  // fallow-ignore-next-line unused-class-member
+   setCommerceContext(agentSessionId: string, commerceContext: CommerceContext): AgentSession {
+     const sessions = this.#readSessions();
+     const index = sessions.findIndex((session) => session.agentSessionId === agentSessionId);
+@@ -66,22 +67,12 @@ export class FileSessionStore implements SessionStore {
+       (candidate) => candidate.agentSessionId === agentSessionId,
+     );
+ 
+-    if (!isSessionAvailable(session, merchantId, this.#now())) {
+-      return undefined;
+-    }
+-
+-    return session;
++    return isSessionAvailable(session, merchantId, this.#now()) ? session : undefined;
+   }
+ 
+   // fallow-ignore-next-line unused-class-member
+   getPublicSession(agentSessionId: string, merchantId: string): PublicAgentSession | undefined {
+-    const session = this.getSession(agentSessionId, merchantId);
+-
+-    if (!session) {
+-      return undefined;
+-    }
+-
+-    return toPublicSession(session);
++    return toPublicSession(this.getSession(agentSessionId, merchantId));
+   }
+ 
+   #readSessions(): AgentSession[] {
+@@ -99,17 +90,25 @@ export class FileSessionStore implements SessionStore {
+   }
+ }
+ 
+-function readSession(value: unknown): AgentSession {
+-  if (!isStoredSession(value)) {
+-    throw new Error('Session store file contains an invalid session record');
+-  }
+-
++function readSession(input: unknown): AgentSession {
++  const value = storedSessionSchema.parse(input);
+   return {
++    ...(value.callerIdentityId ? { callerIdentityId: value.callerIdentityId } : {}),
+     agentSessionId: value.agentSessionId,
+     merchantId: value.merchantId,
+     agentId: value.agentId,
+     channel: value.channel,
+-    customerContext: value.customerContext,
++    customerContext: {
++      ...(value.customerContext.customerId !== undefined
++        ? { customerId: value.customerContext.customerId }
++        : {}),
++      ...(value.customerContext.customerGroup !== undefined
++        ? { customerGroup: value.customerContext.customerGroup }
++        : {}),
++      ...(value.customerContext.region !== undefined
++        ? { region: value.customerContext.region }
++        : {}),
++    },
+     ...(value.commerceContext ? { commerceContext: value.commerceContext } : {}),
+     createdAt: new Date(value.createdAt),
+     ...(value.expiresAt ? { expiresAt: new Date(value.expiresAt) } : {}),
+@@ -118,6 +117,7 @@ function readSession(value: unknown): AgentSession {
+ 
+ function writeSession(session: AgentSession): StoredAgentSession {
+   return {
++    ...(session.callerIdentityId ? { callerIdentityId: session.callerIdentityId } : {}),
+     agentSessionId: session.agentSessionId,
+     merchantId: session.merchantId,
+     agentId: session.agentId,
+@@ -129,25 +129,24 @@ function writeSession(session: AgentSession): StoredAgentSession {
+   };
+ }
+ 
+-function isStoredSession(value: unknown): value is StoredAgentSession {
+-  if (!isRecord(value)) {
+-    return false;
+-  }
+-
+-  return (
+-    typeof value.agentSessionId === 'string' &&
+-    typeof value.merchantId === 'string' &&
+-    typeof value.agentId === 'string' &&
+-    typeof value.channel === 'string' &&
+-    isRecord(value.customerContext) &&
+-    typeof value.createdAt === 'string'
+-  );
+-}
++const storedSessionSchema = z.object({
++  callerIdentityId: z.string().min(1).optional(),
++  agentSessionId: z.string(),
++  merchantId: z.string(),
++  agentId: z.string(),
++  channel: z.enum(agentChannels),
++  customerContext: z.object({
++    customerId: z.string().optional(),
++    customerGroup: z.string().optional(),
++    region: z.string().optional(),
++  }),
++  commerceContext: z
++    .object({ shopwareSalesChannelId: z.string(), shopwareContextToken: z.string() })
++    .optional(),
++  createdAt: z.iso.datetime(),
++  expiresAt: z.iso.datetime().optional(),
++});
+ 
+ function ensureParentDirectory(path: string): void {
+   mkdirSync(dirname(path), { recursive: true });
+ }
+-
+-function isRecord(value: unknown): value is Record<string, unknown> {
+-  return typeof value === 'object' && value !== null;
+-}
+diff --git a/src/session/session-store.ts b/src/session/session-store.ts
+index 1e01b58..776e82d 100644
+--- a/src/session/session-store.ts
++++ b/src/session/session-store.ts
+@@ -26,6 +26,9 @@ export class InMemorySessionStore implements SessionStore {
+   }
+ 
+   createSession(session: AgentSession): AgentSession {
++    if (this.#sessions.has(session.agentSessionId)) {
++      throw new Error('Session identifier already exists');
++    }
+     this.#sessions.set(session.agentSessionId, session);
+ 
+     return session;
+@@ -51,21 +54,11 @@ export class InMemorySessionStore implements SessionStore {
+   getSession(agentSessionId: string, merchantId: string): AgentSession | undefined {
+     const session = this.#sessions.get(agentSessionId);
+ 
+-    if (!isSessionAvailable(session, merchantId, this.#clock.now())) {
+-      return undefined;
+-    }
+-
+-    return session;
++    return isSessionAvailable(session, merchantId, this.#clock.now()) ? session : undefined;
+   }
+ 
+   getPublicSession(agentSessionId: string, merchantId: string): PublicAgentSession | undefined {
+-    const session = this.getSession(agentSessionId, merchantId);
+-
+-    if (!session) {
+-      return undefined;
+-    }
+-
+-    return toPublicSession(session);
++    return toPublicSession(this.getSession(agentSessionId, merchantId));
+   }
+ }
+ 
+@@ -89,7 +82,10 @@ export function isSessionAvailable(
+   return session.expiresAt > now;
+ }
+ 
+-export function toPublicSession(session: AgentSession): PublicAgentSession {
++export function toPublicSession(session: AgentSession): PublicAgentSession;
++export function toPublicSession(session: AgentSession | undefined): PublicAgentSession | undefined;
++export function toPublicSession(session: AgentSession | undefined): PublicAgentSession | undefined {
++  if (!session) return undefined;
+   const publicSession: PublicAgentSession = {
+     agentSessionId: session.agentSessionId,
+     merchantId: session.merchantId,
+diff --git a/src/storage/sqlite-store-schemas.ts b/src/storage/sqlite-store-schemas.ts
+index 7eb314c..b38fb89 100644
+--- a/src/storage/sqlite-store-schemas.ts
++++ b/src/storage/sqlite-store-schemas.ts
+@@ -19,6 +19,7 @@ const policyDecisionStatuses = ['allow', 'block', 'escalate'] as const;
+ const agentRunStatuses = ['running', 'completed', 'failed', 'cancelled'] as const;
+ 
+ export const sessionRowSchema = z.object({
++  caller_identity_id: z.string().nullable(),
+   agent_session_id: z.string(),
+   merchant_id: z.string(),
+   agent_id: z.string(),
+diff --git a/src/storage/sqlite-store-support.ts b/src/storage/sqlite-store-support.ts
+index 6bd7c64..95b2500 100644
+--- a/src/storage/sqlite-store-support.ts
++++ b/src/storage/sqlite-store-support.ts
+@@ -51,6 +51,12 @@ export function migrateSessionStore(db: Database): void {
+     created_at text not null,
+     expires_at text
+   )`);
++  db.transaction(() => {
++    const columns = db.query<{ name: string }, []>('pragma table_info(sessions)').all();
++    if (!columns.some((column) => column.name === 'caller_identity_id')) {
++      db.run('alter table sessions add column caller_identity_id text');
++    }
++  }).immediate();
+ }
+ 
+ export function migrateHandoffStore(db: Database): void {
+@@ -122,6 +128,7 @@ export function sessionFromRow(row: z.infer<typeof sessionRowSchema>): AgentSess
+       : {};
+ 
+   return {
++    ...(row.caller_identity_id ? { callerIdentityId: row.caller_identity_id } : {}),
+     agentSessionId: row.agent_session_id,
+     merchantId: row.merchant_id,
+     agentId: row.agent_id,
+diff --git a/src/storage/sqlite-stores.ts b/src/storage/sqlite-stores.ts
+index 3814c03..febb0c1 100644
+--- a/src/storage/sqlite-stores.ts
++++ b/src/storage/sqlite-stores.ts
+@@ -48,7 +48,8 @@ export class SqliteSessionStore implements SessionStore {
+   createSession(session: AgentSession): AgentSession {
+     this.#db
+       .query(
+-        `insert or replace into sessions (
++        `insert into sessions (
++          caller_identity_id,
+           agent_session_id,
+           merchant_id,
+           agent_id,
+@@ -58,9 +59,10 @@ export class SqliteSessionStore implements SessionStore {
+           shopware_context_token,
+           created_at,
+           expires_at
+-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
++        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       )
+       .run(
++        session.callerIdentityId ?? null,
+         session.agentSessionId,
+         session.merchantId,
+         session.agentId,
+@@ -75,7 +77,6 @@ export class SqliteSessionStore implements SessionStore {
+     return session;
+   }
+ 
+-  // fallow-ignore-next-line unused-class-member
+   setCommerceContext(agentSessionId: string, commerceContext: CommerceContext): AgentSession {
+     const session = this.#getSessionById(agentSessionId);
+ 
+@@ -87,7 +88,15 @@ export class SqliteSessionStore implements SessionStore {
+       ...session,
+       commerceContext,
+     };
+-    this.createSession(updatedSession);
++    this.#db
++      .query(
++        'update sessions set shopware_sales_channel_id = ?, shopware_context_token = ? where agent_session_id = ?',
++      )
++      .run(
++        commerceContext.shopwareSalesChannelId,
++        commerceContext.shopwareContextToken,
++        agentSessionId,
++      );
+ 
+     return updatedSession;
+   }
+@@ -95,22 +104,11 @@ export class SqliteSessionStore implements SessionStore {
+   getSession(agentSessionId: string, merchantId: string): AgentSession | undefined {
+     const session = this.#getSessionById(agentSessionId);
+ 
+-    if (!isSessionAvailable(session, merchantId, this.#now())) {
+-      return undefined;
+-    }
+-
+-    return session;
++    return isSessionAvailable(session, merchantId, this.#now()) ? session : undefined;
+   }
+ 
+-  // fallow-ignore-next-line unused-class-member
+   getPublicSession(agentSessionId: string, merchantId: string): PublicAgentSession | undefined {
+-    const session = this.getSession(agentSessionId, merchantId);
+-
+-    if (!session) {
+-      return undefined;
+-    }
+-
+-    return toPublicSession(session);
++    return toPublicSession(this.getSession(agentSessionId, merchantId));
+   }
+ 
+   #getSessionById(agentSessionId: string): AgentSession | undefined {
+diff --git a/tests/session/caller-session-store.test.ts b/tests/session/caller-session-store.test.ts
+new file mode 100644
+index 0000000..7453307
+--- /dev/null
++++ b/tests/session/caller-session-store.test.ts
+@@ -0,0 +1,94 @@
++import { afterEach, expect, test } from 'bun:test';
++import { mkdtempSync, rmSync } from 'node:fs';
++import { tmpdir } from 'node:os';
++import { join } from 'node:path';
++import { type CallerAccess, CallerAccessDenied } from '../../src/contracts/caller-access.js';
++import type { AgentSession } from '../../src/contracts/session.js';
++import { CallerSessionStore } from '../../src/session/caller-session-store.js';
++import { InMemorySessionStore } from '../../src/session/session-store.js';
++import { SqliteSessionStore } from '../../src/storage/sqlite-stores.js';
++
++const directories: string[] = [];
++afterEach(() => {
++  for (const path of directories.splice(0)) rmSync(path, { recursive: true });
++});
++
++function access(identityId: string, merchantId = 'shop'): CallerAccess {
++  return {
++    current: () => ({ identityId, merchantId, kind: 'key' }),
++    allows: () => true,
++    canResume: () => true,
++    aroundSession: (_id, run) => run(),
++    denyAction: () => undefined,
++    aroundAction: (_capability, _id, run) => run(),
++  };
++}
++
++function session(id: string): AgentSession {
++  return {
++    agentSessionId: id,
++    agentId: 'seller',
++    merchantId: 'shop',
++    channel: 'a2a',
++    customerContext: {},
++    createdAt: new Date(),
++  };
++}
++
++test('owner is assigned at creation and cannot be supplied or replaced by the caller', () => {
++  const underlying = new InMemorySessionStore();
++  const alice = new CallerSessionStore(underlying, access('alice'));
++  const bob = new CallerSessionStore(underlying, access('bob'));
++  alice.createSession({ ...session('shared'), callerIdentityId: 'forged' });
++  expect(underlying.getSession('shared', 'shop')?.callerIdentityId).toBe('alice');
++  expect(() => bob.getSession('shared', 'shop')).toThrow(CallerAccessDenied);
++  expect(() => bob.createSession(session('shared'))).toThrow();
++  expect(() =>
++    bob.setCommerceContext('shared', { shopwareSalesChannelId: 'x', shopwareContextToken: 'x' }),
++  ).toThrow(CallerAccessDenied);
++  expect(alice.getPublicSession('shared', 'shop')).not.toHaveProperty('callerIdentityId');
++});
++
++test('legacy sessions and another merchant are denied, never adopted', () => {
++  const underlying = new InMemorySessionStore();
++  underlying.createSession(session('legacy'));
++  const alice = new CallerSessionStore(underlying, access('alice'));
++  expect(() => alice.getSession('legacy', 'shop')).toThrow(CallerAccessDenied);
++  expect(() => alice.getSession('legacy', 'other')).toThrow(CallerAccessDenied);
++  expect(underlying.getSession('legacy', 'shop')?.callerIdentityId).toBeUndefined();
++});
++
++test('SQLite retains owner on restart and context changes; expired records cannot be overwritten', () => {
++  const directory = mkdtempSync(join(tmpdir(), 'caller-store-test-'));
++  directories.push(directory);
++  const options = { databasePath: join(directory, 'sessions.sqlite') };
++  const underlying = new SqliteSessionStore(options);
++  const alice = new CallerSessionStore(underlying, access('alice'));
++  alice.createSession(session('persisted'));
++  alice.setCommerceContext('persisted', {
++    shopwareSalesChannelId: 's',
++    shopwareContextToken: 'server-secret',
++  });
++  const restarted = new SqliteSessionStore(options);
++  expect(restarted.getSession('persisted', 'shop')?.callerIdentityId).toBe('alice');
++  expect(() =>
++    new CallerSessionStore(restarted, access('bob')).getSession('persisted', 'shop'),
++  ).toThrow(CallerAccessDenied);
++  underlying.createSession({ ...session('expired'), expiresAt: new Date(1) });
++  expect(() => underlying.createSession(session('expired'))).toThrow();
++  expect(restarted.getPublicSession('persisted', 'shop')).not.toHaveProperty('commerceContext');
++});
++
++test('audit failure refuses creation before the session exists', () => {
++  const underlying = new InMemorySessionStore();
++  const controller: CallerAccess = {
++    ...access('alice'),
++    aroundSession: () => {
++      throw new Error('audit full');
++    },
++  };
++  expect(() =>
++    new CallerSessionStore(underlying, controller).createSession(session('absent')),
++  ).toThrow('audit full');
++  expect(underlying.getSession('absent', 'shop')).toBeUndefined();
++});
