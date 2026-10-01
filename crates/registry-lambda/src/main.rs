@@ -99,14 +99,34 @@ async fn main() -> Result<(), lambda_http::Error> {
                 }
             };
 
-            let app = router(
-                Arc::new(store),
-                Arc::new(resolver()?),
+            let store = Arc::new(store);
+            let dns = Arc::new(resolver()?);
+            let mut app = router(
+                store.clone(),
+                dns.clone(),
                 RegistryConfig {
-                    origin,
+                    origin: origin.clone(),
                     revalidate_interval_seconds: revalidate_interval_seconds(),
                 },
             );
+            if let Ok(key) = std::env::var("REGISTRY_TRUST_KEY_ID")
+                && !key.is_empty()
+            {
+                let io = registry_lambda::trust::KmsTrustIo::new(
+                    aws_sdk_kms::Client::new(&config),
+                    &key,
+                    &origin,
+                )
+                .await?;
+                app = app.merge(registry_api::trust::router(
+                    registry_api::trust::TrustState {
+                        store,
+                        resolver: dns,
+                        io: Arc::new(io),
+                        origin,
+                    },
+                ));
+            }
             let app = match edge_secret {
                 Some(secret) => app.layer(axum::middleware::from_fn(
                     move |req: axum::extract::Request, next: axum::middleware::Next| {

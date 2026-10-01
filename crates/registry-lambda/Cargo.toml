@@ -32,3 +32,6 @@ base64ct = { workspace = true }
 axum = { workspace = true }
 subtle = "2"
 sha2 = { workspace = true }
+aws-sdk-kms = { version = "1", default-features = false, features = ["rt-tokio", "default-https-client"] }
+aithos-catalog-signatures = { git = "https://github.com/Math1987/a2a_ai-catalog_trust-manifest-implementation", rev = "d11e5fd48a8645b7e2252cec5cd1160128e480e3", features = ["http"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }

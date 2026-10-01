@@ -88,6 +88,75 @@ impl AwsStore {
 
 #[async_trait]
 impl Store for AwsStore {
+    async fn get_trust(&self, agent: &str, id: &str) -> StoreResult<Option<serde_json::Value>> {
+        let out = self
+            .ddb
+            .get_item()
+            .table_name(&self.table)
+            .key("pk", Av::S(format!("TRUST#{agent}")))
+            .key("sk", Av::S(id.into()))
+            .consistent_read(true)
+            .send()
+            .await
+            .map_err(backend)?;
+        out.item
+            .map(|item| {
+                let body = item
+                    .get("envelope")
+                    .and_then(|v| v.as_s().ok())
+                    .ok_or_else(|| backend("missing issuance"))?;
+                serde_json::from_str(body).map_err(backend)
+            })
+            .transpose()
+    }
+    async fn commit_trust(&self, c: &registry_api::trust::TrustCommit) -> StoreResult<()> {
+        use aws_sdk_dynamodb::types::ConditionCheck;
+        let agent=ConditionCheck::builder().table_name(&self.table)
+            .key("pk",Av::S(keys::agent_pk(&c.agent.agent_id))).key("sk",Av::S(keys::CURRENT_SK.into()))
+            .condition_expression("#seq = :seq AND #status = :active AND cardDigest = :digest AND authorizedKids = :kids")
+            .expression_attribute_names("#seq","seq").expression_attribute_names("#status","status")
+            .expression_attribute_values(":seq",Av::N(c.agent.seq.to_string()))
+            .expression_attribute_values(":active",Av::S("ACTIVE".into()))
+            .expression_attribute_values(":digest",Av::S(c.agent.card_digest.clone()))
+            .expression_attribute_values(":kids",Av::Ss(c.agent.authorized_kids.iter().cloned().collect()))
+            .build().map_err(backend)?;
+        let cert=ConditionCheck::builder().table_name(&self.table)
+            .key("pk",Av::S(keys::agent_pk(&c.agent.agent_id))).key("sk",Av::S(keys::CERT_SK.into()))
+            .condition_expression("certificationIssuedAt = :at AND requestedDomains = :requested AND observed = :observed")
+            .expression_attribute_values(":at",Av::S(c.certification.issued_at.clone().ok_or_else(||backend("missing certification"))?))
+            .expression_attribute_values(":requested",Av::S(item::requested_json(&c.certification.requested)))
+            .expression_attribute_values(":observed",Av::S(item::observed_json(&c.certification.observed)))
+            .build().map_err(backend)?;
+        let body = serde_json::to_string(&c.envelope).map_err(backend)?;
+        let mut request = self
+            .ddb
+            .transact_write_items()
+            .transact_items(TransactWriteItem::builder().condition_check(agent).build())
+            .transact_items(TransactWriteItem::builder().condition_check(cert).build());
+        for sk in [&c.id, "LATEST"] {
+            let mut put = Put::builder()
+                .table_name(&self.table)
+                .item("pk", Av::S(format!("TRUST#{}", c.agent.agent_id)))
+                .item("sk", Av::S(sk.into()))
+                .item("envelope", Av::S(body.clone()));
+            if sk != "LATEST" {
+                put = put.condition_expression("attribute_not_exists(pk)");
+            }
+            request = request.transact_items(
+                TransactWriteItem::builder()
+                    .put(put.build().map_err(backend)?)
+                    .build(),
+            );
+        }
+        request.send().await.map_err(|e| {
+            if matches!(e.as_service_error(),Some(TransactWriteItemsError::TransactionCanceledException(canceled))
+                if canceled.cancellation_reasons().iter().any(|r|matches!(r.code(),Some("ConditionalCheckFailed"|"TransactionConflict")))
+                && canceled.cancellation_reasons().iter().all(|r|matches!(r.code(),None|Some("None"|"ConditionalCheckFailed"|"TransactionConflict")))) {
+                StoreError::Conflict
+            } else {backend(e)}
+        })?;
+        Ok(())
+    }
     async fn get_agent(&self, agent_id: &str) -> StoreResult<Option<AgentRecord>> {
         match self.get_agent_item(agent_id).await? {
             None => Ok(None),

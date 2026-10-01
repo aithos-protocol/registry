@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, codex/trust-manifests]
   pull_request:
   # Weekly, because `cargo deny` is only as fresh as its last run: an advisory
   # published between two pushes would otherwise wait for the next commit —

@@ -20,9 +20,12 @@ async-trait = { workspace = true }
 tracing = { workspace = true }
 time = { workspace = true }
 semver = "1"
+tokio = { workspace = true, features = ["time"] }
+aithos-catalog-signatures = { git = "https://github.com/Math1987/a2a_ai-catalog_trust-manifest-implementation", rev = "d11e5fd48a8645b7e2252cec5cd1160128e480e3" }
+p256 = { version = "0.13", features = ["ecdsa"] }
+base64ct = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 p256 = { version = "0.13", features = ["ecdsa"] }
