@@ -364,3 +364,19 @@ async fn rejects_expired_consent_and_tampered_receipt_even_with_fresh_consent() 
     f.consent(p);
     assert_eq!(f.issue().await.0, StatusCode::BAD_REQUEST);
 }
+
+#[tokio::test]
+async fn removing_host_assertion_key_invalidates_current_issuance() {
+    let f = Fixture::new().await;
+    assert_eq!(f.issue().await.0, StatusCode::OK);
+    f.io.responses.lock().unwrap().insert(
+        format!("{HOST}/.well-known/jwks.json"),
+        b"{\"keys\":[]}".to_vec(),
+    );
+    assert_eq!(
+        f.call("GET", &format!("/trustmanifest/{}", f.agent), None)
+            .await
+            .0,
+        StatusCode::GONE
+    );
+}

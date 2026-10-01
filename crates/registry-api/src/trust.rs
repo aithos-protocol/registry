@@ -400,7 +400,7 @@ async fn issue_inner(
     let evidence = json!({"experimental":true,"registryAgentId":agent,"registrySeq":record.seq,
         "registryCardDigest":record.card_digest,"domain":domain_name,"hostReceipt":req.receipt,
         "dns":{"query":domain.query_name(),"records":answers,"observedAt":timestamp(dns_at)?,"resolverProfile":"registry-recursive-no-dnssec-assertion"},
-        "consent":req.consent,"consentAcceptedAt":timestamp(signed_at)?,
+        "consent":req.consent,"requestedEntry":req.entry,"consentAcceptedAt":timestamp(signed_at)?,
         "transparency":{"independentWitness":false,"requiresOnlineRevalidation":true},
         "claim":"Domain declaration and hosted-agent management control observed at the stated times; no legal ownership or safety assertion."});
     let issuer = s.issuer();
@@ -484,6 +484,20 @@ async fn current_inner(s: &TrustState, agent: &str, v: &Value) -> Result<bool, P
     if verification::timestamp(text(v, "expiresAt")?).map_err(unavailable)? <= now {
         return Ok(false);
     }
+    let signature: pr117::Signature =
+        serde_json::from_value(v["entry"]["signatures"][0].clone()).map_err(unavailable)?;
+    let policy = verification::Policy::new([s.issuer()], now);
+    if !pr117::verify_signature(
+        &v["entry"],
+        &signature,
+        pr117::Scope::Entry,
+        &s.io.did_document(),
+        &policy,
+    )
+    .unwrap_or(false)
+    {
+        return Ok(false);
+    }
     let Some(record) = s.store.get_agent(agent).await? else {
         return Ok(false);
     };
@@ -511,6 +525,20 @@ async fn current_inner(s: &TrustState, agent: &str, v: &Value) -> Result<bool, P
     }
     let host = &v["hostClaims"];
     let receipt = text(evidence, "hostReceipt")?;
+    let jwks = fetched_json(s, &format!("{HOST}/.well-known/jwks.json")).await?;
+    if verify_host(
+        receipt,
+        &jwks,
+        OffsetDateTime::now_utc().unix_timestamp(),
+        &s.origin,
+        agent,
+        text(evidence, "domain")?,
+        text(host, "nonce")?,
+    )
+    .is_err()
+    {
+        return Ok(false);
+    }
     if !hosting_active(s, host, receipt).await? {
         return Ok(false);
     }
