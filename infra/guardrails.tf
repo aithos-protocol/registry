@@ -99,6 +99,20 @@ resource "aws_wafv2_web_acl" "registry" {
             statement {
               byte_match_statement {
                 positional_constraint = "EXACTLY"
+                search_string         = "post"
+                field_to_match {
+                  method {}
+                }
+                text_transformation {
+                  priority = 0
+                  type     = "LOWERCASE"
+                }
+              }
+            }
+
+            statement {
+              byte_match_statement {
+                positional_constraint = "EXACTLY"
                 search_string         = "delete"
 
                 field_to_match {

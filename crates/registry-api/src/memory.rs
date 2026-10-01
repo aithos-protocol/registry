@@ -17,6 +17,7 @@ use crate::store::{
 
 #[derive(Default)]
 struct Inner {
+    trust: BTreeMap<(String, String), serde_json::Value>,
     agents: BTreeMap<String, AgentRecord>,
     versions: BTreeMap<String, Vec<VersionRecord>>,
     cards: BTreeMap<(String, String), Vec<u8>>,
@@ -42,6 +43,34 @@ impl MemoryStore {
 
 #[async_trait]
 impl Store for MemoryStore {
+    async fn commit_trust(&self, c: &crate::trust::TrustCommit) -> StoreResult<()> {
+        let mut inner = self.inner.lock().unwrap();
+        if inner.agents.get(&c.agent.agent_id) != Some(&c.agent)
+            || inner.certifications.get(&c.agent.agent_id) != Some(&c.certification)
+            || inner
+                .trust
+                .contains_key(&(c.agent.agent_id.clone(), c.id.clone()))
+        {
+            return Err(StoreError::Conflict);
+        }
+        inner
+            .trust
+            .insert((c.agent.agent_id.clone(), c.id.clone()), c.envelope.clone());
+        inner.trust.insert(
+            (c.agent.agent_id.clone(), "LATEST".into()),
+            c.envelope.clone(),
+        );
+        Ok(())
+    }
+    async fn get_trust(&self, agent: &str, id: &str) -> StoreResult<Option<serde_json::Value>> {
+        Ok(self
+            .inner
+            .lock()
+            .unwrap()
+            .trust
+            .get(&(agent.into(), id.into()))
+            .cloned())
+    }
     async fn get_agent(&self, agent_id: &str) -> StoreResult<Option<AgentRecord>> {
         Ok(self.inner.lock().unwrap().agents.get(agent_id).cloned())
     }

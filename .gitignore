@@ -1,4 +1,5 @@
 target/
+.local/
 .DS_Store
 
 # Never commit credentials or local configuration.
@@ -18,3 +19,5 @@ _to_delete/
 # it against dev with a throwaway key. It is somebody's scratch file, never this
 # repository's content.
 agent-card.json
+
+__pycache__/

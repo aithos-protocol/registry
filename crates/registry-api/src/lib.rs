@@ -10,6 +10,7 @@ pub mod catalog;
 pub mod memory;
 pub mod problem;
 pub mod store;
+pub mod trust;
 
 pub use api::{AppState, RegistryConfig, router};
 pub use catalog::{CATALOG, ProblemDoc};

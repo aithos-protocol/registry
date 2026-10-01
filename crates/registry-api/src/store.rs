@@ -124,6 +124,14 @@ pub struct CertificationState {
 
 #[async_trait]
 pub trait Store: Send + Sync + 'static {
+    /// Experimental immutable issuance and mutable latest pointer. The commit
+    /// must fence BOTH the active agent record and complete certification state.
+    async fn commit_trust(&self, _commit: &crate::trust::TrustCommit) -> StoreResult<()> {
+        Err(StoreError::Backend("trust issuance is disabled".into()))
+    }
+    async fn get_trust(&self, _agent: &str, _id: &str) -> StoreResult<Option<serde_json::Value>> {
+        Err(StoreError::Backend("trust issuance is disabled".into()))
+    }
     async fn get_agent(&self, agent_id: &str) -> StoreResult<Option<AgentRecord>>;
 
     /// Commit an accepted write.

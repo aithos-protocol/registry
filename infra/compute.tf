@@ -92,20 +92,21 @@ resource "aws_lambda_function" "registry" {
   architectures = ["arm64"]
 
   memory_size = var.lambda_memory_mb
-  timeout     = 15
+  timeout     = var.experimental_trust_enabled ? 30 : 15
 
   environment {
     variables = {
-      REGISTRY_ROLE        = "api"
-      REGISTRY_TABLE       = aws_dynamodb_table.registry.name
-      REGISTRY_BUCKET      = aws_s3_bucket.registry.id
-      REGISTRY_ORIGIN      = "https://${var.hostname}"
-      REGISTRY_EDGE_SECRET = random_password.edge_secret.result
-      RUST_LOG             = "info"
+      REGISTRY_ROLE         = "api"
+      REGISTRY_TABLE        = aws_dynamodb_table.registry.name
+      REGISTRY_BUCKET       = aws_s3_bucket.registry.id
+      REGISTRY_ORIGIN       = "https://${var.hostname}"
+      REGISTRY_EDGE_SECRET  = random_password.edge_secret.result
+      RUST_LOG              = "info"
+      REGISTRY_TRUST_KEY_ID = var.experimental_trust_enabled ? aws_kms_key.trust[0].arn : ""
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.lambda]
+  depends_on = [aws_cloudwatch_log_group.lambda, aws_iam_role_policy.trust]
 }
 
 # --- The reconciler ----------------------------------------------------------
